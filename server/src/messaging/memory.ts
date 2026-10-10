@@ -28,6 +28,13 @@ export class MemoryMessenger implements Messenger {
     this.onSend?.(dm);
   }
 
+  /** Links show up in the inbox as "[link: url]". */
+  async sendLink(to: string, url: string): Promise<void> {
+    const dm = { to: normalizeHandle(to), text: `[link: ${url}]` };
+    this.outbox.push(dm);
+    this.onSend?.(dm);
+  }
+
   async listen(handler: DMHandler): Promise<void> {
     this.handler = handler;
   }

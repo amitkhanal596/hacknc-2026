@@ -21,6 +21,7 @@ import {
   payoutsOnboardingLink,
   PayoutsUnavailableError,
   readPayLink,
+  readTabLink,
   refreshPayoutStatus,
 } from "../payments/service";
 import {
@@ -37,7 +38,10 @@ import {
 import { createGroup, getGroup, getGroupByCode, groupsOf, isMember, membersOf } from "../store/groups";
 import { paymentsOf } from "../store/payments";
 import { getOrCreateUser, getUser, getUserByStripeAccount, nameOf, updateUser } from "../store/users";
+import { renderTabCard } from "../web/card";
 import { landingPage, startedPage, tabContactCard } from "../web/landing";
+import { tabPage } from "../web/tab-page";
+import { buildSummary } from "../bot/summary";
 import { joinedPage, joinPage, messagePage, payPage } from "../web/pages";
 import { startLogin, userIdFromBearer, verifyLogin } from "./auth";
 import { joinInvite } from "../copy";
@@ -319,6 +323,40 @@ export function createApp(ctx: Ctx) {
     // Photon shared lines only let the bot reply once the person has texted it,
     // so they finish joining by sending a pre-filled JOIN text to their own Tab number.
     return c.html(joinedPage({ groupName: group.name, code: group.joinCode, line, joinText: `JOIN ${group.joinCode} - I'm ${name}` }));
+  });
+
+  // ---------------------------------------------------------------- tab page + preview card (signed link, no login)
+  const tabFromToken = (token: string) => {
+    const link = readTabLink(ctx, token);
+    const user = link ? getUser(ctx, link.userId) : undefined;
+    const group = link && user && isMember(ctx, link.groupId, user.id) ? getGroup(ctx, link.groupId) : undefined;
+    return user && group ? buildSummary(ctx, user, group) : undefined;
+  };
+  // Cards are re-rendered at most every 30s per link (iMessage may fetch twice).
+  const cardCache = new Map<string, { at: number; png: Buffer }>();
+
+  app.get("/t/:token", (c) => {
+    const token = c.req.param("token");
+    const summary = tabFromToken(token);
+    if (!summary) return c.html(messagePage("Link expired", "Text Tab SUMMARY for a fresh link to your tab."), 410);
+    const payLinks = ctx.stripe
+      ? summary.people.filter((p) => p.net < 0).map((p) => ({ name: p.name, cents: -p.net, url: payLinkUrl(ctx, summary.group.id, summary.user.id, p.id) }))
+      : [];
+    return c.html(tabPage({ summary, token, publicBaseUrl: ctx.config.publicBaseUrl, payLinks, line: summary.user.photonLine ?? undefined }));
+  });
+
+  app.get("/t/:token/card.png", async (c) => {
+    const token = c.req.param("token");
+    const cached = cardCache.get(token);
+    let png = cached && ctx.now() - cached.at < 30_000 ? cached.png : undefined;
+    if (!png) {
+      const summary = tabFromToken(token);
+      if (!summary) return c.text("expired", 410);
+      png = await renderTabCard(summary);
+      cardCache.set(token, { at: ctx.now(), png });
+      if (cardCache.size > 500) cardCache.delete(cardCache.keys().next().value!);
+    }
+    return c.body(new Uint8Array(png), 200, { "content-type": "image/png", "cache-control": "public, max-age=60" });
   });
 
   // ---------------------------------------------------------------- pay page (signed link, no login)

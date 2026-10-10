@@ -27,7 +27,7 @@ Installed on your Mac: **Stripe CLI** 1.53.1, **cloudflared** (the HTTPS tunnel)
 
 | Test | Result |
 |---|---|
-| `npm test`: ledger math, the full Asheville scenario over DMs, extension API, jobs, Apple Pay flow (fake Stripe), join page, Photon registration, receipt-photo forwarding, image rejection, Gemini model fallback, home page, dispute fixes | ✅ **70 / 70** |
+| `npm test`: ledger math, the full Asheville scenario over DMs, extension API, jobs, Apple Pay flow (fake Stripe), join page, Photon registration, receipt-photo forwarding, image rejection, Gemini model fallback, home page, dispute fixes, running tab, tab summary + card | ✅ **79 / 79** |
 | Simulator with **real Gemini**: receipt photo → expense, "dinner was 96, split with jake" → 2-way split, "pay me $20" → asks why, approvals, WHY, settle-up with Apple Pay links | ✅ |
 | `npm run check:stripe`: real PaymentIntent → test card → webhook → payment recorded | ✅ |
 | `npm run phone`: public HTTPS tunnel, Stripe registered the domain with **Apple Pay: active**, server reachable from the internet | ✅ |
@@ -122,8 +122,9 @@ Your phone doesn't need to be on the same Wi-Fi. The tunnel is public.
 | 3 | Open the invite link on a **second phone** (or send it to a friend) | A join page. Enter a name + iPhone number, tap **Join**. That phone gets a text from Tab, and you get "👋 Jake joined". |
 | 4 | Send Tab a **photo of any receipt** with a caption like `gas, everyone` | "Logged to Test Trip: Gas $X · split 2 ways · 🧾 receipt matched". Your friend is asked to approve. |
 | 5 | Text `pay me $20` | "What was the $20.00 for?" Reply `snacks` and it gets logged with ⚠️ no receipt. |
-| 6 | On the friend's phone: `YES ALL` | Approved. You get "✅ Everyone approved…" |
-| 7 | Friend: `WHY` | Breakdown: which expense, the receipt, the math, when they approved |
+| 6 | Check the friend's phone | The receipt photo, then "Your share: $X · Running total: you owe $X". Nothing to approve. It already counts. |
+| 7 | Friend: `nope, I didn't eat` → you reply `make it 30` | Their share goes on hold, then the updated amount counts. Friend: `WHY` shows the breakdown. |
+| 7b | Anyone: `what are my expenses` | A short summary, then a **card** in the chat with your running total. Tap it to see "Your Tab" with every expense. (The card image loads automatically if Tab is saved as a contact; otherwise tap "Tap to load preview".) |
 | 8 | Anyone: `SETTLE` | Each person who owes money gets "Reply PAY… or pay with Apple Pay: https://…" |
 | 9 | Friend taps the **Apple Pay link** | Safari shows the amount, the line items, and an **Apple Pay** button. Pay with Face ID. |
 | 10 | | Both phones get "✅ Paid" / "💸 … paid you $X (Apple Pay)". |
@@ -147,7 +148,7 @@ Three phones (you plus two teammates), with the laptop showing the `npm run phon
 1. **Setup (before you present):** run `npm run phone` and open the home page on the laptop. Its QR code lets anyone at the table scan and get their own Tab number. Text `new trip Asheville` and paste the invite link into your real group chat. Teammates join through the link, so their phones are registered and Tab has texted them.
 2. **Live:** a teammate photographs a real receipt and texts it with "gas, everyone". Every phone buzzes with its own approval request.
 3. Someone texts **"pay me $20"**: Tab asks what it was for. This is the anti-abuse moment.
-4. One teammate **disputes** an expense. The payer gets FIX / WITHDRAW options and sends a receipt photo. Everyone re-approves.
+4. One teammate replies **"nope, I didn't ride"**. Their share goes on hold, the payer replies "make it $60" (or sends the receipt), and everyone gets a fresh heads-up with their updated running total.
 5. Someone texts **WHY**: an itemized, sourced answer.
 6. **SETTLE**: one person pays with **Apple Pay** (Face ID, on stage), another texts **PAY** (USDC on Solana devnet, Explorer link on the laptop).
 
@@ -155,7 +156,7 @@ Three phones (you plus two teammates), with the laptop showing the `npm run phon
 - [ ] Steps 2a, 2b, 2c done
 - [ ] Every demo phone has joined once through the invite link (registers it with Photon)
 - [ ] A real card in Apple Wallet on the phone that will use Apple Pay
-- [ ] Rehearse with `DEMO_MODE=true` (default): reminders and auto-approve happen in minutes instead of hours
+- [ ] Rehearse with `DEMO_MODE=true` (default): after SETTLE, payment reminders come every few minutes instead of hourly
 - [ ] Start from a clean database: `rm server/data/tab.db` (or set `DATABASE_PATH` to a new file)
 
 ### Risks and backups
@@ -181,17 +182,17 @@ Three phones (you plus two teammates), with the laptop showing the `npm run phon
 
 | You send | What the bot does |
 |---|---|
-| A clear receipt | Logs it with the total from the receipt. "🧾 receipt matched" means the receipt was read *and* matches any amount you typed. It does **not** mean approved: everyone still approves their own share. |
+| A clear receipt | Logs it with the total from the receipt. "🧾 receipt matched" means the receipt was read *and* matches any amount you typed. It counts right away for everyone in it, and anyone can reply NOPE to put their share on hold. |
 | A receipt, but you typed a different amount | Logs it with **⚠️ receipt says $X** so others see the mismatch before approving |
 | The same receipt twice | Logs it with **⚠️ looks like a duplicate** |
 | A blurry receipt (Gemini under 50% sure of the total) | Logs nothing. Asks for a sharper photo or the amount. |
 | A random picture (landscape, selfie, meme) | Logs nothing: "That doesn't look like a receipt" |
-| A screenshot of a chat ("I paid $640 for the airbnb") | Logs it from the text, forwards the screenshot as evidence, but marks it **⚠️ no receipt** (never auto-approves) |
+| A screenshot of a chat ("I paid $640 for the airbnb") | Logs it from the text, forwards the screenshot as evidence, but marks it **⚠️ no receipt** |
 | Any photo while Gemini is down or out of quota | Logs nothing: "I can't read photos right now… text me the amount instead" |
 
 Tested live: a drawn landscape came back "other" (rejected). A meme with "$50" in it was either rejected or read as a chat claim with no reason, so the bot asks "What was the $50 for?". In no case does a random picture become an approved debt.
 
-**The photo is forwarded.** When an expense has a receipt or screenshot, each person asked to approve gets **the photo first, then the approval text**, so the evidence is right there. When a payer adds a receipt to settle a dispute, everyone gets the new photo with "…and added the receipt above". Photos are stored in the database (`receipt_images`) next to the expense.
+**The photo is forwarded.** When an expense has a receipt or screenshot, each person in the expense gets **the photo first, then the heads-up**, so the evidence is right there. When a payer adds a receipt to settle a dispute, everyone gets the new photo with "…and added the receipt above". Photos are stored in the database (`receipt_images`) next to the expense.
 
 ## 6. Gemini limits (important for the demo)
 
@@ -211,10 +212,10 @@ Text messages fall back to the built-in parser if every model fails. Photos can'
 
 | Command | What it does |
 |---|---|
-| `npm test` | All 70 tests (no network) |
+| `npm test` | All 79 tests (no network) |
 | `npm run sim` | Text the bot from your terminal as different people |
 | `npm run phone` | Tunnel + Stripe domain + webhooks + server, for iPhone testing and demos. The public URL's home page is the signup site. |
-| `npm run preview:site` | Preview the home page design with fake data (http://localhost:3994, also `/started` and `/error`) |
+| `npm run preview:site` | Preview the home page, tab page, and iMessage card with fake data (http://localhost:3994: `/`, `/started`, `/error`, `/tab`, `/tab-owe`, `/t/preview/card.png`) |
 | `npm run dev` | Server only (Photon + API + jobs), restarts on file changes |
 | `npm run photon:register -- +1… Name` | Register a phone with Photon and print the number it should text |
 | `npm run check:photon -- +1…` | Register, text yourself a hello, print replies for 2 minutes |

@@ -15,10 +15,14 @@ export function getGroupByCode(ctx: Ctx, code: string): Group | undefined {
 export function createGroup(ctx: Ctx, organizer: User, name: string, kind: Group["kind"] = "trip"): Group {
   let joinCode = newJoinCode(name);
   while (getGroupByCode(ctx, joinCode)) joinCode = newJoinCode(name);
-  const group: Group = { id: newId("grp"), name, kind, joinCode, organizerId: organizer.id, createdAt: ctx.now() };
+  const group: Group = { id: newId("grp"), name, kind, joinCode, organizerId: organizer.id, settleRequestedAt: null, createdAt: ctx.now() };
   ctx.db.insert(groups).values(group).run();
   addMember(ctx, group.id, organizer.id);
   return group;
+}
+
+export function markSettleRequested(ctx: Ctx, groupId: string) {
+  ctx.db.update(groups).set({ settleRequestedAt: ctx.now() }).where(eq(groups.id, groupId)).run();
 }
 
 export function isMember(ctx: Ctx, groupId: string, userId: string): boolean {

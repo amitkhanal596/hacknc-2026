@@ -63,7 +63,7 @@ What's left:
 - [x] Expense capture from images: verified with real Gemini on real receipts; random pictures rejected; low-confidence totals asked about
 - [x] Receipt photo forwarded to everyone asked to approve (and on dispute fixes); stored in `receipt_images`
 - [x] Gemini model chain (3.8 → 3.5 → 2.5 → 2.5-lite) with 12s timeouts and cooldowns; free tier is 20 req/day/model
-- [x] Approval DMs to each person, batched (YES ALL / YES 1 3 / DISPUTE 2 reason)
+- [x] Heads-up DM to each person with their share + running total (no approval step); NOPE to flag; payment asks only after SETTLE
 - [x] Prompts per kind so bare replies resolve safely ("what was the $20 for?" → "firewood")
 - [x] Disputes → payer replies with a new amount in plain words ("$30 is fine", "make it 40"), ACCEPTs the disputer's suggested amount, WITHDRAWs, or sends a receipt photo; same-named new expense updates the disputed one instead of duplicating; BALANCE lists open disputes
 - [x] WHY explanations (deterministic, from records only)
@@ -86,7 +86,7 @@ What's left:
 - [x] Extension REST API (groups, expenses, detail + audit, approve/dispute own share only, explain, pay, pay link, onboarding)
 - [x] Jobs: auto-approve, reminders (debt + review) with backoff, held-payment sweep, stale Apple Pay expiry
 - [ ] Daily digest
-- [ ] Link-preview / card images (`/og/...`)
+- [x] Tab summary: SUMMARY / "what are my expenses" → text + rich link card (`/t/:token`, `/t/:token/card.png`) opening a "Your Tab" page
 
 ## Phase 6: iMessage extension (Swift)
 - [ ] Xcode project (`ios/Tab`) with Messages extension
@@ -155,3 +155,5 @@ npm run dev               # real server (Spectrum + HTTP API + jobs)
 | 2026-10-10 | AK + Claude | Live end-to-end on a real iPhone (Photon both ways, real devnet PAY, Stripe Connect). Join page now hands people a pre-filled JOIN text (shared lines need them to text first). Receipt photos forwarded to approvers; random pictures rejected; Gemini model chain + timeouts after hitting the free-tier 20/day limit. 51 tests. |
 | 2026-10-10 | AK + Claude | Frutiger Aero home page replaces `npm run photon:register` for organizers: enter name + number → Tab number, text/save-contact buttons, QR for the demo table. 56 tests. |
 | 2026-10-10 | AK + Claude | Fixed the dispute dead-end found in live testing ("$30 is fine" created a new expense, re-logging made a duplicate). Natural fix replies, ACCEPT suggested amount, dedupe, BALANCE shows disputes, "X owes me" = X owes all. 70 tests. |
+| 2026-10-10 | AK + Claude | Running-tab model: expenses count immediately, heads-up with share + running total (receipt photo first), NOPE instead of DISPUTE (payer: new amount / OK / REMOVE / receipt), payment requests and reminders only after SETTLE. 74 tests. |
+| 2026-10-10 | AK + Claude | "What are my expenses" → summary text + Partiful-style rich card (satori/resvg PNG) opening a Frutiger Aero "Your Tab" page with netting per person. Confirmed netting: $20 vs $25 → one $5 payment. 79 tests. |

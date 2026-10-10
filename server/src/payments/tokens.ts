@@ -6,7 +6,9 @@ import { createHmac, timingSafeEqual } from "node:crypto";
  */
 export type TokenPayload =
   | { t: "pay"; groupId: string; fromId: string; toId: string; exp: number }
-  | { t: "api"; userId: string; exp: number };
+  | { t: "api"; userId: string; exp: number }
+  /** Read-only link to someone's tab (summary page + preview card). */
+  | { t: "tab"; userId: string; groupId: string; exp: number };
 
 const b64 = (buf: Buffer) => buf.toString("base64url");
 

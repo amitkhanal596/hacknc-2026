@@ -149,13 +149,14 @@ describe("approvals", () => {
   const now = 1_000_000;
   const pending = { userId: "jake", status: "pending" as const, autoApproveAt: now + 10, approvedVia: null };
 
-  it("approves the payer's own share and leaves others pending", () => {
+  it("counts everyone's share right away (running tab)", () => {
     expect(initialShare({ userId: "amit", payerId: "amit", hasReceipt: false, now })).toMatchObject({ status: "approved", approvedVia: "payer" });
-    expect(initialShare({ userId: "jake", payerId: "amit", hasReceipt: true, now, autoApproveMs: 50 })).toMatchObject({ status: "pending", autoApproveAt: now + 50 });
+    expect(initialShare({ userId: "jake", payerId: "amit", hasReceipt: false, now })).toMatchObject({ status: "approved", approvedVia: "auto", autoApproveAt: null });
   });
 
-  it("never sets auto-approval without a receipt", () => {
-    expect(initialShare({ userId: "jake", payerId: "amit", hasReceipt: false, now }).autoApproveAt).toBeNull();
+  it("can still require approval (old flow): receipt-backed shares auto-approve later, text-only never do", () => {
+    expect(initialShare({ userId: "jake", payerId: "amit", hasReceipt: true, now, autoApproveMs: 50, requireApproval: true })).toMatchObject({ status: "pending", autoApproveAt: now + 50 });
+    expect(initialShare({ userId: "jake", payerId: "amit", hasReceipt: false, now, requireApproval: true }).autoApproveAt).toBeNull();
   });
 
   it("only lets the owner approve or dispute", () => {

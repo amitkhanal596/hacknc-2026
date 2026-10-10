@@ -100,7 +100,7 @@ export function payPage(d: PayPageData) {
         </form>
         <p id="status" class="muted"></p>
       </div>
-      <p class="muted" style="text-align:center">Only approved expenses are included. Text WHY to the bot for the details.</p>`,
+      <p class="muted" style="text-align:center">Flagged expenses aren't included. Text WHY to the bot for the details.</p>`,
   );
 }
 
@@ -128,7 +128,7 @@ export function joinPage(d: { code: string; groupName: string; members: string[]
           <button class="secondary" type="submit" style="background:var(--ink);color:var(--bg);border:0">Join &amp; get a text from Tab</button>
         </form>
       </div>
-      <p class="muted" style="text-align:center">Tab texts you to track shared costs. You only owe what you approve.</p>`,
+      <p class="muted" style="text-align:center">Tab keeps a running tab of shared costs. Something not right? Reply NOPE anytime.</p>`,
   );
 }
 

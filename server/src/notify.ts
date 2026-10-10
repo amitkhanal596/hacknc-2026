@@ -15,6 +15,18 @@ export async function dm(ctx: Ctx, userId: string, text: string): Promise<void> 
   }
 }
 
+/** Sends a rich link (iMessage renders the page's preview card). Failures are logged, never thrown. */
+export async function dmLink(ctx: Ctx, userId: string, url: string): Promise<void> {
+  const user = getUser(ctx, userId);
+  if (!user) return;
+  try {
+    await ctx.messenger.sendLink(user.phone, url);
+    logDM(ctx, userId, "out", url);
+  } catch (err) {
+    console.error(`[notify] failed to send a link to ${userId}:`, (err as Error).message);
+  }
+}
+
 /** Sends a photo (e.g. the receipt behind an expense). Failures are logged, never thrown. */
 export async function dmImage(ctx: Ctx, userId: string, image: OutboundImage): Promise<void> {
   const user = getUser(ctx, userId);

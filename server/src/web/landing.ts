@@ -157,7 +157,8 @@ const HILL = `<svg class="hill" viewBox="0 0 1440 200" preserveAspectRatio="none
   <path d="M0 150 C 300 85, 640 95, 900 130 S 1300 160, 1440 120 L1440 138 C 1300 176, 1100 150, 900 146 S 300 104, 0 168 Z" fill="url(#shine)" opacity=".55"/>
 </svg>`;
 
-function shell(title: string, body: ReturnType<typeof html>) {
+/** Page chrome shared by the home page and the tab page: sky, sun, bubbles, hill. */
+export function aeroShell(title: string, body: ReturnType<typeof html>, opts: { head?: ReturnType<typeof html>; description?: string } = {}) {
   return html`<!doctype html>
     <html lang="en">
       <head>
@@ -165,7 +166,8 @@ function shell(title: string, body: ReturnType<typeof html>) {
         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
         <meta name="theme-color" content="#3fb4f0" />
         <title>${title}</title>
-        <meta name="description" content="Split trip costs by text. Send Tab a receipt, everyone approves their share, settle with Apple Pay or USDC." />
+        <meta name="description" content="${opts.description ?? "Split trip costs by text. Send Tab a receipt, everyone sees their running total, settle up with Apple Pay or USDC."}" />
+        ${opts.head ?? ""}
         <style>
           ${raw(STYLE)}
         </style>
@@ -200,8 +202,8 @@ const howItWorks = html`<section class="glass how">
   <ul class="steps" style="margin-top:12px">
     <li><div class="step-orb"><span>💬</span></div><div><b>Start a group</b><p>Text Tab <code>new trip Asheville</code> and paste the invite link in your group chat.</p></div></li>
     <li><div class="step-orb"><span>🧾</span></div><div><b>Snap receipts</b><p>Send a photo. Tab reads it and texts everyone their share, with the receipt attached.</p></div></li>
-    <li><div class="step-orb"><span>✅</span></div><div><b>Everyone approves</b><p>Nobody owes a cent they didn't OK. Text <code>WHY</code> for the full breakdown.</p></div></li>
-    <li><div class="step-orb"><span>💸</span></div><div><b>Settle up</b><p>Text <code>SETTLE</code>, then pay with Apple Pay or USDC on Solana.</p></div></li>
+    <li><div class="step-orb"><span>📊</span></div><div><b>Keep a running tab</b><p>Everyone gets a heads-up with their share and running total. Something off? Reply <code>NOPE</code>.</p></div></li>
+    <li><div class="step-orb"><span>💸</span></div><div><b>Settle up at the end</b><p>Nobody's asked to pay mid-trip. Text <code>SETTLE</code> when you're done, then pay with Apple Pay or USDC.</p></div></li>
   </ul>
 </section>`;
 
@@ -224,12 +226,12 @@ export interface LandingData {
 }
 
 export function landingPage(d: LandingData) {
-  return shell(
+  return aeroShell(
     "Tab: split costs by text",
     html`${brand}
       <section class="glass hero">
         <h2 class="hero-title">Split trip costs without the spreadsheet.</h2>
-        <p class="lede">Text Tab your receipts. Everyone approves their own share. Settle up with Apple Pay or USDC.</p>
+        <p class="lede">Text Tab your receipts. Everyone gets a running total. Settle up at the end with Apple Pay or USDC.</p>
         ${d.messagingEnabled
           ? html`<form method="post" action="/start">
               <label for="name">Your first name</label>
@@ -261,7 +263,7 @@ export function formatPhone(e164: string): string {
 export function startedPage(d: StartedData) {
   const smsNew = `sms:${d.line}&body=${encodeURIComponent("new trip ")}`;
   const smsHi = `sms:${d.line}&body=${encodeURIComponent("hi")}`;
-  return shell(
+  return aeroShell(
     "Your Tab number",
     html`${brand}
       <section class="glass hero">

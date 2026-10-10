@@ -30,6 +30,8 @@ export interface Messenger {
   readonly name: string;
   send(to: string, text: string): Promise<void>;
   sendImage(to: string, image: OutboundImage): Promise<void>;
+  /** A link iMessage shows as a rich preview card (image + title). */
+  sendLink(to: string, url: string): Promise<void>;
   /** Starts delivering inbound DMs to the handler. Resolves once listening has started. */
   listen(handler: DMHandler): Promise<void>;
   stop?(): Promise<void>;

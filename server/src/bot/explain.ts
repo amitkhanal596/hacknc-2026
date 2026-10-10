@@ -84,13 +84,13 @@ function status(d: ShareDetail, you: string): string {
   const s = d.share;
   switch (s.status) {
     case "approved":
-      return s.approvedVia === "auto"
-        ? `auto-approved ${shortDate(s.decidedAt ?? d.expense.createdAt)} (had a receipt)`
-        : `${you} approved ${shortDate(s.decidedAt ?? d.expense.createdAt)}`;
+      return s.approvedVia === "reply" || s.approvedVia === "extension"
+        ? `${you} OK'd it ${shortDate(s.decidedAt ?? d.expense.createdAt)}`
+        : "counted";
     case "pending":
       return "waiting on your OK (not counted yet)";
     case "disputed":
-      return `you disputed it${s.disputeReason ? `: "${truncate(s.disputeReason, 40)}"` : ""} (not counted)`;
+      return `you flagged it${s.disputeReason ? `: "${truncate(s.disputeReason, 40)}"` : ""} (on hold, not counted)`;
     default:
       return s.status;
   }

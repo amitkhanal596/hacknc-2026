@@ -5,6 +5,7 @@ import { owed } from "../src/ledger/settle";
 import { expensesOf } from "../src/store/expenses";
 import { getGroupByCode } from "../src/store/groups";
 import { getUserByPhone } from "../src/store/users";
+import { sendReminders } from "../src/jobs";
 import { fakeReceipt, makeBot, PHONES } from "./helpers";
 
 describe("command parsing", () => {
@@ -18,6 +19,10 @@ describe("command parsing", () => {
     expect(parseCommand("YES ALL")).toEqual({ type: "yes", all: true, numbers: [] });
     expect(parseCommand("yes 1 3")).toEqual({ type: "yes", all: false, numbers: [1, 3] });
     expect(parseCommand("dispute 2 wasn't that much")).toEqual({ type: "dispute", number: 2, reason: "wasn't that much" });
+    expect(parseCommand("nope, I didn't eat")).toEqual({ type: "dispute", number: undefined, reason: "I didn't eat" });
+    expect(parseCommand("not mine")).toEqual({ type: "dispute", number: undefined, reason: "" });
+    expect(parseCommand("no worries")).toBeUndefined(); // plain "no" isn't a flag
+    expect(parseCommand("remove")).toEqual({ type: "withdraw" });
     expect(parseCommand("DISPUTE I don't remember any firewood")).toEqual({ type: "dispute", number: undefined, reason: "I don't remember any firewood" });
     expect(parseCommand("PAY")).toEqual({ type: "pay", who: undefined });
     expect(parseCommand("pay amit")).toEqual({ type: "pay", who: "amit" });
@@ -55,6 +60,9 @@ describe("dispute reply parsing", () => {
 describe("Asheville trip, end to end over DMs", () => {
   let bot: ReturnType<typeof makeBot>;
   let code: string;
+  const group = () => getGroupByCode(bot.ctx, code)!;
+  const id = (who: keyof typeof PHONES) => getUserByPhone(bot.ctx, PHONES[who])!.id;
+  const activeExpenses = () => expensesOf(bot.ctx, group().id).filter((e) => e.status === "active");
 
   beforeEach(async () => {
     bot = makeBot();
@@ -74,35 +82,41 @@ describe("Asheville trip, end to end over DMs", () => {
   });
 
   it("creates the group and gives everyone a wallet", () => {
-    const group = getGroupByCode(bot.ctx, code)!;
-    expect(group.name).toBe("Asheville Trip");
+    expect(group().name).toBe("Asheville Trip");
     for (const phone of Object.values(PHONES)) {
       const u = getUserByPhone(bot.ctx, phone)!;
-      expect(u.activeGroupId).toBe(group.id);
+      expect(u.activeGroupId).toBe(group().id);
       expect(u.walletPubkey).toBeTruthy();
     }
   });
 
-  it("logs a receipt, asks each person in their own DM, and approves", async () => {
+  it("logs a receipt, counts it right away, and gives everyone a heads-up with their running total", async () => {
     const logged = await bot.say("amit", "gas, everyone", [fakeReceipt({ totalCents: 8000, merchant: "Shell", date: "2026-10-11" })]);
     expect(logged).toContain("Logged to Asheville Trip: Gas $80.00 · split 4 ways ($20.00 each) · 🧾 receipt matched");
-    expect(logged).toContain("I've asked Jake, Priya and Sam to approve");
+    expect(logged).toContain("I let Jake, Priya and Sam know. Running total: you're owed $60.00.");
 
-    const ask = bot.read("jake");
-    expect(ask).toContain("Amit logged Gas $80.00 (🧾 receipt matched) for Asheville Trip. Your share: $20.00.");
-    expect(ask).toContain("Reply YES, DISPUTE + reason, or WHY.");
+    const notice = bot.read("jake");
+    expect(notice).toContain("Amit logged Gas $80.00 (🧾 receipt matched) for Asheville Trip.");
+    expect(notice).toContain("Your share: $20.00 · Running total: you owe $20.00.");
+    expect(notice).toContain('Not right? Reply NOPE and what\'s off (like "nope, I didn\'t eat").');
+    expect(notice).not.toMatch(/DISPUTE|Reply YES|approve/i);
+    expect(notice).not.toMatch(/PAY|Apple Pay/); // nobody is asked to pay when an expense is logged
 
-    expect(await bot.say("jake", "YES")).toContain("✅ Approved: Gas (your share $20.00).");
-    const group = getGroupByCode(bot.ctx, code)!;
-    const jake = getUserByPhone(bot.ctx, PHONES.jake)!;
-    const amit = getUserByPhone(bot.ctx, PHONES.amit)!;
-    const priya = getUserByPhone(bot.ctx, PHONES.priya)!;
-    // Only Jake approved, so only Jake owes anything yet.
-    expect(owed(groupDebts(bot.ctx, group.id), jake.id, amit.id)).toBe(2000);
-    expect(owed(groupDebts(bot.ctx, group.id), priya.id, amit.id)).toBe(0);
+    // It already counts: no YES needed.
+    expect(owed(groupDebts(bot.ctx, group().id), id("jake"), id("amit"))).toBe(2000);
+    expect(owed(groupDebts(bot.ctx, group().id), id("priya"), id("amit"))).toBe(2000);
   });
 
-  it("forwards the receipt photo to each person right before their approval request", async () => {
+  it("keeps a running total across expenses", async () => {
+    await bot.say("amit", "paid $40 for gas, everyone");
+    bot.read("jake");
+    await bot.say("priya", "paid $96 for dinner, split with jake and sam");
+    expect(bot.read("jake")).toContain("Your share: $32.00 · Running total: you owe $42.00.");
+    await bot.say("jake", "paid $30 for snacks, everyone");
+    expect(bot.read("amit")).toContain("Running total: you're owed $22.50."); // $30 from gas minus $7.50 snacks
+  });
+
+  it("forwards the receipt photo right before each heads-up", async () => {
     await bot.say("amit", "gas, everyone", [fakeReceipt({ totalCents: 8000, merchant: "Shell" })]);
     for (const who of ["jake", "priya", "sam"] as const) {
       const msgs = bot.messenger.inbox(PHONES[who]);
@@ -110,8 +124,8 @@ describe("Asheville trip, end to end over DMs", () => {
       expect(msgs[1]).toContain("Amit logged Gas $80.00 (🧾 receipt matched)");
     }
     const photo = bot.messenger.outbox.find((m) => m.to === PHONES.jake && m.image)!.image!;
-    expect(JSON.parse(photo.data.toString())).toMatchObject({ totalCents: 8000 }); // the exact bytes that were sent in
-    expect(bot.messenger.inbox(PHONES.amit).some((m) => m.startsWith("[photo:"))).toBe(false); // not echoed to the payer
+    expect(JSON.parse(photo.data.toString())).toMatchObject({ totalCents: 8000 });
+    expect(bot.messenger.inbox(PHONES.amit).some((m) => m.startsWith("[photo:"))).toBe(false);
   });
 
   it("doesn't log random pictures, low-confidence receipts, or anything when the AI is down", async () => {
@@ -122,20 +136,15 @@ describe("Asheville trip, end to end over DMs", () => {
       extractFromText: (input: Parameters<typeof real.extractFromText>[0]) => real.extractFromText(input),
       extractFromImage: async () => ({ confidence: 0, ...r }) as never,
     });
-
     bot.ctx.extractor = withImage({ kind: "other" });
     expect(await bot.say("amit", "gas, everyone", [image])).toContain("doesn't look like a receipt, so I didn't log anything");
-
     bot.ctx.extractor = withImage({ kind: "receipt", totalCents: 8000, confidence: 0.3 });
     expect(await bot.say("amit", "gas, everyone", [image])).toContain("couldn't read the total clearly");
-
     bot.ctx.extractor = withImage({ kind: "other", unavailable: true });
     expect(await bot.say("amit", "gas, everyone", [image])).toContain("I can't read photos right now");
-
     bot.ctx.extractor = real;
-    const group = getGroupByCode(bot.ctx, code)!;
-    expect(groupDebts(bot.ctx, group.id)).toEqual([]);
-    expect(bot.read("jake")).toBe(""); // nobody was asked to approve anything
+    expect(groupDebts(bot.ctx, group().id)).toEqual([]);
+    expect(bot.read("jake")).toBe("");
   });
 
   it("forwards a chat screenshot as evidence but still marks it as no receipt", async () => {
@@ -153,8 +162,7 @@ describe("Asheville trip, end to end over DMs", () => {
 
   it("refuses 'pay me $20' until it has a reason, then logs it with a no-receipt badge", async () => {
     expect(await bot.say("sam", "pay me $30")).toBe("What was the $30.00 for? A receipt photo helps.");
-    const logged = await bot.say("sam", "firewood");
-    expect(logged).toContain("Firewood $30.00 · split 4 ways ($7.50 each) · ⚠️ no receipt");
+    expect(await bot.say("sam", "firewood")).toContain("Firewood $30.00 · split 4 ways ($7.50 each) · ⚠️ no receipt");
     expect(bot.read("amit")).toContain("Sam logged Firewood $30.00 (⚠️ no receipt)");
   });
 
@@ -177,53 +185,33 @@ describe("Asheville trip, end to end over DMs", () => {
   });
 
   it("splits only between the people named", async () => {
-    const logged = await bot.say("priya", "paid $96 for dinner, split with jake and sam");
-    expect(logged).toContain("Dinner $96.00 · split 3 ways ($32.00 each)");
-    expect(bot.read("amit")).toBe(""); // Amit wasn't part of dinner, so he isn't asked.
+    expect(await bot.say("priya", "paid $96 for dinner, split with jake and sam")).toContain("Dinner $96.00 · split 3 ways ($32.00 each)");
+    expect(bot.read("amit")).toBe("");
     expect(bot.read("jake")).toContain("Your share: $32.00");
   });
 
-  it("handles a dispute: the share is frozen, the payer adds a receipt, everyone re-approves", async () => {
-    await bot.say("sam", "pay me $30");
-    await bot.say("sam", "firewood");
-    bot.messenger.clearInbox();
-
-    const disputed = await bot.say("amit", "DISPUTE I don't remember any firewood");
-    expect(disputed).toContain("won't count until it's sorted out");
-    const toSam = bot.read("sam");
-    expect(toSam).toContain('Amit disputed Firewood $30.00: "I don\'t remember any firewood"');
-    expect(toSam).toContain('Reply with the new total (like "make it $15"), WITHDRAW to remove it, or send a receipt photo.');
-
-    const updated = await bot.say("sam", "", [fakeReceipt({ totalCents: 3000, merchant: "Ingles", date: "2026-10-12" })]);
-    expect(updated).toContain("Updated Firewood: $30.00 (🧾 receipt matched)");
-    const toAmit = bot.read("amit");
-    expect(toAmit).toContain("[photo: firewood-receipt.jpg]"); // the new receipt is forwarded
-    expect(toAmit).toContain("Sam updated Firewood and added the receipt above.");
-    expect(await bot.say("amit", "yes")).toContain("✅ Approved: Firewood");
-  });
-
-  describe("fixing a disputed expense (the Fortnite lessons bug)", () => {
-    const activeExpenses = () => expensesOf(bot.ctx, getGroupByCode(bot.ctx, code)!.id).filter((e) => e.status === "active");
-
+  describe("NOPE: flagging an expense that isn't right", () => {
     beforeEach(async () => {
-      const logged = await bot.say("priya", "Amit owes me $80 for fortnite lessons");
-      expect(logged).toContain("Fortnite lessons $80.00 · owed in full");
-      expect(bot.read("amit")).toContain("Your share: $80.00");
-      await bot.say("amit", "dispute I am better than her at Fortnite");
+      expect(await bot.say("priya", "Amit owes me $80 for fortnite lessons")).toContain("Fortnite lessons $80.00 · owed in full");
+      expect(bot.read("amit")).toContain("Your share: $80.00 · Running total: you owe $80.00.");
+      const r = await bot.say("amit", "nope, I am better than her at Fortnite");
+      expect(r).toContain("Got it, I let Priya know. Your $80.00 share of Fortnite lessons is on hold until you two sort it out.");
+      expect(r).toContain("Running total: you're all even.");
     });
 
-    it("tells the payer they can just reply with a new amount", () => {
+    it("puts the share on hold and tells the payer in friendly words", () => {
+      expect(owed(groupDebts(bot.ctx, group().id), id("amit"), id("priya"))).toBe(0);
       const toPriya = bot.read("priya");
-      expect(toPriya).toContain('Amit disputed Fortnite lessons $80.00: "I am better than her at Fortnite"');
-      expect(toPriya).toContain('Reply with the new total (like "make it $40")');
+      expect(toPriya).toContain('Amit flagged Fortnite lessons $80.00: "I am better than her at Fortnite"');
+      expect(toPriya).toContain('Reply with the new total (like "make it $40"), REMOVE to delete it, or send the receipt.');
+      expect(toPriya).not.toMatch(/dispute|withdraw/i);
     });
 
     it("treats '$30 is fine' as a fix to THAT expense, not a new one", async () => {
-      bot.read("priya");
       expect(await bot.say("priya", "$30 is fine")).toContain("Updated Fortnite lessons: $30.00");
       expect(activeExpenses()).toHaveLength(1);
-      expect(bot.read("amit")).toContain("Your share: $30.00");
-      expect(await bot.say("amit", "yes")).toContain("✅ Approved: Fortnite lessons (your share $30.00)");
+      expect(bot.read("amit")).toContain("Priya updated Fortnite lessons to $30.00.");
+      expect(owed(groupDebts(bot.ctx, group().id), id("amit"), id("priya"))).toBe(3000); // counts again, no YES needed
     });
 
     for (const reply of ["make it 40", "change it to $40", "40 works", "ok $40", "fix 40"]) {
@@ -233,11 +221,15 @@ describe("Asheville trip, end to end over DMs", () => {
       });
     }
 
-    it("updates the disputed expense instead of logging a duplicate with the same name", async () => {
+    it("updates the flagged expense instead of logging a duplicate with the same name", async () => {
       const r = await bot.say("priya", "send amit $40 fixed amount for fortnite lessons");
-      expect(r).toContain("That sounds like the disputed Fortnite lessons ($80.00), so I updated it instead of adding a new one.");
-      expect(r).toContain("Updated Fortnite lessons: $40.00");
+      expect(r).toContain("That sounds like the flagged Fortnite lessons ($80.00), so I updated it instead of adding a new one.");
       expect(activeExpenses().map((e) => [e.description, e.totalCents])).toEqual([["Fortnite lessons", 4000]]);
+    });
+
+    it("lets the payer REMOVE it", async () => {
+      expect(await bot.say("priya", "remove")).toContain("Removed Fortnite lessons $80.00");
+      expect(bot.read("amit")).toContain("Priya removed Fortnite lessons $80.00. You don't owe anything for it.");
     });
 
     it("still logs genuinely different expenses normally", async () => {
@@ -253,85 +245,85 @@ describe("Asheville trip, end to end over DMs", () => {
       };
       const r = await bot.say("priya", "fortnite lessons", [fakeReceipt({}, "selfie.jpg")]);
       expect(r).toContain("doesn't look like a receipt");
-      expect(r).not.toContain("couldn't read a total");
     });
 
-    it("shows open disputes in BALANCE for both people", async () => {
-      expect(await bot.say("amit", "balance")).toContain("⏸ You disputed Fortnite lessons $80.00 (waiting on Priya).");
-      expect(await bot.say("priya", "balance")).toContain("⏸ Your Fortnite lessons $80.00 is disputed.");
+    it("lets the payer fix it by sending the receipt", async () => {
+      expect(await bot.say("priya", "", [fakeReceipt({ totalCents: 8000, merchant: "Fortnite Coach" })])).toContain(
+        "Updated Fortnite lessons: $80.00 (🧾 receipt matched)",
+      );
+      const toAmit = bot.read("amit");
+      expect(toAmit).toContain("[photo: fortnite-lessons-receipt.jpg]");
+      expect(toAmit).toContain("Priya updated Fortnite lessons and added the receipt above.");
+    });
+
+    it("shows flagged expenses in BALANCE for both people", async () => {
+      expect(await bot.say("amit", "balance")).toContain("⏸ You flagged Fortnite lessons $80.00 (waiting on Priya).");
+      expect(await bot.say("priya", "balance")).toContain("⏸ Your Fortnite lessons $80.00 was flagged.");
     });
   });
 
-  it("lets the disputer suggest an amount and the payer ACCEPT it", async () => {
+  it("lets the person flagging suggest an amount and the payer reply OK", async () => {
     await bot.say("priya", "Amit owes me $80 for fortnite lessons");
-    await bot.say("amit", "dispute should be $30, it was one lesson");
-    expect(bot.read("priya")).toContain("Amit suggests $30.00. Reply ACCEPT to change the total to $30.00");
-    expect(await bot.say("priya", "accept")).toContain("Updated Fortnite lessons: $30.00");
+    await bot.say("amit", "nope, should be $30, it was one lesson");
+    expect(bot.read("priya")).toContain("Amit suggests $30.00. Reply OK to change it to $30.00");
+    expect(await bot.say("priya", "ok")).toContain("Updated Fortnite lessons: $30.00");
     expect(bot.read("amit")).toContain("Your share: $30.00");
   });
 
-  it("lets the payer withdraw a disputed expense", async () => {
-    await bot.say("sam", "paid $30 for firewood");
-    await bot.say("amit", "dispute nope");
-    expect(await bot.say("sam", "withdraw")).toContain("Removed Firewood $30.00");
-    expect(bot.read("jake")).toContain("Sam removed Firewood $30.00. You don't owe anything for it.");
+  it("flags the expense named in the message, not just the latest one", async () => {
+    await bot.say("amit", "paid $40 for gas, everyone");
+    await bot.say("priya", "paid $60 for groceries, everyone");
+    const r = await bot.say("jake", "nope, I wasn't there for the gas");
+    expect(r).toContain("share of Gas is on hold");
+    expect(bot.read("amit")).toContain("Jake flagged Gas $40.00");
+    expect(bot.read("priya")).not.toContain("flagged");
   });
 
-  it("runs the whole trip: approvals, WHY, SETTLE, and PAY", async () => {
+  it("still understands the old DISPUTE wording", async () => {
+    await bot.say("amit", "paid $40 for gas, everyone");
+    expect(await bot.say("jake", "DISPUTE wasn't there")).toContain("share of Gas is on hold");
+  });
+
+  it("only asks people to pay when someone texts SETTLE, then reminds until paid", async () => {
     await bot.say("amit", "gas, everyone", [fakeReceipt({ totalCents: 8000, merchant: "Shell", date: "2026-10-11" })]);
     await bot.say("priya", "paid $96 for dinner, split with jake and sam");
     await bot.say("sam", "paid $30 for firewood");
+    bot.messenger.clearInbox();
 
-    // Jake has three things waiting; they come as one numbered list.
-    const list = bot.read("jake").split("\n---\n").at(-1)!;
-    expect(list).toContain("You have 3 expenses waiting for your OK:");
-    expect(list).toContain("Reply YES ALL, YES 1 3, or DISPUTE 2 + reason.");
-
-    expect(await bot.say("jake", "yes")).toContain("Which ones?");
-    expect(await bot.say("jake", "YES ALL")).toContain("✅ Approved: Gas (your share $20.00), Dinner (your share $32.00) and Firewood (your share $7.50).");
-    await bot.say("priya", "yes all");
-    await bot.say("sam", "yes all");
-    expect(bot.read("amit")).toContain("✅ Everyone approved Gas $80.00 in Asheville Trip.");
-    expect(await bot.say("amit", "yes")).toContain("Firewood");
+    // Hours pass mid-trip: no payment nagging.
+    for (let i = 0; i < 5; i++) {
+      bot.advance(2 * 60 * 60 * 1000);
+      expect(await sendReminders(bot.ctx)).toBe(0);
+    }
+    expect(bot.read("jake")).toBe("");
 
     const why = await bot.say("jake", "why do I owe amit");
     expect(why).toContain("You owe Amit $20.00 for Asheville Trip:");
     expect(why).toContain("• $20.00 Gas ($80.00 ÷ 4) · Amit's receipt (Shell)");
-    expect(why).toContain("you approved");
-
-    const fullWhy = await bot.say("jake", "WHY");
-    expect(fullWhy).toContain("You owe Priya $32.00");
-    expect(fullWhy).toContain('Priya texted "paid $96 for dinner, split with jake and sam"');
-    expect(fullWhy).toContain("You owe Sam $7.50");
 
     const settled = await bot.say("priya", "SETTLE");
-    expect(settled).toContain("Sent settle-up texts for Asheville Trip:");
+    expect(settled).toContain("Settling up Asheville Trip. I texted everyone their total:");
+    expect(settled).toContain("I'll remind anyone who hasn't paid.");
     const jakeSettle = bot.read("jake");
-    expect(jakeSettle).toContain("You owe Priya $32.00, Amit $20.00 and Sam $7.50 for Asheville Trip.");
+    expect(jakeSettle).toContain("Time to settle up Asheville Trip: you owe Priya $32.00, Amit $20.00 and Sam $7.50.");
     expect(jakeSettle).toContain("Reply PAY to send USDC from your Tab wallet");
-    expect(jakeSettle).not.toContain("Apple Pay"); // Stripe isn't configured in this test.
 
-    const paid = await bot.say("jake", "PAY");
-    expect(paid).toContain("✅ Sent $59.50 USDC, simulated:");
+    // After SETTLE, reminders start (with backoff).
+    expect(await sendReminders(bot.ctx)).toBe(0); // starts the clock
+    bot.advance(61 * 60 * 1000);
+    expect(await sendReminders(bot.ctx)).toBeGreaterThan(0);
+    expect(bot.read("jake")).toContain("⏰ Reminder: Time to settle up Asheville Trip");
+
+    expect(await bot.say("jake", "PAY")).toContain("✅ Sent $59.50 USDC, simulated:");
     expect(bot.read("amit")).toContain("💸 Jake paid you $20.00 (USDC, simulated) for Asheville Trip.");
     expect(await bot.say("jake", "balance")).toContain("You're all settled up.");
-
-    // Sam owes Amit $20 for gas minus Amit's $7.50 firewood share.
-    const group = getGroupByCode(bot.ctx, code)!;
-    const sam = getUserByPhone(bot.ctx, PHONES.sam)!;
-    const amit = getUserByPhone(bot.ctx, PHONES.amit)!;
-    expect(owed(groupDebts(bot.ctx, group.id), sam.id, amit.id)).toBe(1250);
-
-    // Paying twice does nothing.
+    expect(owed(groupDebts(bot.ctx, group().id), id("sam"), id("amit"))).toBe(1250);
     expect(await bot.say("jake", "PAY")).toBe("You don't owe anyone in Asheville Trip right now.");
   });
 
-  it("does not let anyone approve someone else's share", async () => {
-    await bot.say("amit", "paid $40 for snacks");
-    // Amit has nothing pending himself; his YES can't touch Jake's share.
-    expect(await bot.say("amit", "yes all")).toBe("Nothing is waiting on your OK right now.");
-    const group = getGroupByCode(bot.ctx, code)!;
-    expect(groupDebts(bot.ctx, group.id)).toEqual([]);
+  it("YES just shows your running total now (nothing to approve)", async () => {
+    await bot.say("amit", "paid $40 for gas, everyone");
+    expect(await bot.say("jake", "yes")).toBe("👍 Asheville Trip: you owe $10.00.");
   });
 
   it("ignores non-expenses and welcomes strangers", async () => {

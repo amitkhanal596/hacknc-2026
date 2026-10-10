@@ -22,6 +22,18 @@ export function payLinkUrl(ctx: Ctx, groupId: string, fromId: string, toId: stri
   return `${ctx.config.publicBaseUrl}/p/${token}`;
 }
 
+const TAB_LINK_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** Read-only link to someone's tab: the summary page iMessage previews as a card. */
+export function tabLinkUrl(ctx: Ctx, userId: string, groupId: string): string {
+  const token = signToken({ t: "tab", userId, groupId, exp: ctx.now() + TAB_LINK_TTL_MS }, ctx.config.appSecret);
+  return `${ctx.config.publicBaseUrl}/t/${token}`;
+}
+
+export function readTabLink(ctx: Ctx, token: string) {
+  return verifyToken(token, ctx.config.appSecret, "tab", ctx.now());
+}
+
 export function readPayLink(ctx: Ctx, token: string) {
   return verifyToken(token, ctx.config.appSecret, "pay", ctx.now());
 }

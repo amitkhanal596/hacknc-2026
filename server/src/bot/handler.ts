@@ -9,8 +9,8 @@ import { formatCents as $ } from "../ledger/money";
 import { splitEqual } from "../ledger/splits";
 import { mismatchTolerance, validateExpense, type ReceiptInfo } from "../ledger/validate";
 import type { InboundDM } from "../messaging/types";
-import { dm, dmImage } from "../notify";
-import { notifyCreditor, paySolana, payoutsOnboardingLink, PayoutsUnavailableError } from "../payments/service";
+import { dm, dmImage, dmLink } from "../notify";
+import { notifyCreditor, paySolana, payoutsOnboardingLink, PayoutsUnavailableError, tabLinkUrl } from "../payments/service";
 import { clearPrompt, getPrompt, logDM, recentInbound, setPrompt } from "../store/dms";
 import {
   applyShareAction,
@@ -25,13 +25,14 @@ import {
   withdrawExpense,
   type ShareDetail,
 } from "../store/expenses";
-import { activeGroup, addMember, createGroup, findUserGroup, getGroup, getGroupByCode, groupsOf, isMember, membersOf } from "../store/groups";
+import { activeGroup, createGroup, findUserGroup, getGroup, getGroupByCode, groupsOf, isMember, markSettleRequested, membersOf } from "../store/groups";
 import { getReceiptImage, receiptFileName, saveReceiptImage } from "../store/receipts";
 import { ensureWallet, getOrCreateUser, getUser, nameOf, updateUser } from "../store/users";
 import { looksLikeName, parseCommand, parseFixReply, sameDescription, suggestedAmount, type Command } from "./commands";
 import { explain } from "./explain";
+import { buildSummary, summaryText } from "./summary";
 import { announceJoin, joinGroup } from "./join";
-import { approvalText, sendApprovalRequests, settleText } from "./messages";
+import { runningTotal, sendExpenseNotice, settleText } from "./messages";
 
 /** Entry point for every inbound 1:1 DM. */
 export async function handleDM(ctx: Ctx, msg: InboundDM): Promise<void> {
@@ -160,6 +161,13 @@ async function runCommand(ctx: Ctx, user: User, cmd: Command, reply: Reply): Pro
       if (!group) return void (await needGroup());
       return reply(balanceText(ctx, user, group));
 
+    case "summary": {
+      if (!group) return void (await needGroup());
+      await reply(summaryText(buildSummary(ctx, user, group)));
+      // Sent on its own so iMessage shows it as a rich card (Partiful-style).
+      return dmLink(ctx, user.id, tabLinkUrl(ctx, user.id, group.id));
+    }
+
     case "settle":
       if (!group) return void (await needGroup());
       return settle(ctx, user, group, reply);
@@ -176,7 +184,7 @@ async function runCommand(ctx: Ctx, user: User, cmd: Command, reply: Reply): Pro
     }
 
     case "yes":
-      return approve(ctx, user, cmd, reply);
+      return approve(ctx, user, reply);
 
     case "dispute":
       return dispute(ctx, user, cmd, reply);
@@ -185,14 +193,14 @@ async function runCommand(ctx: Ctx, user: User, cmd: Command, reply: Reply): Pro
     case "withdraw":
     case "accept": {
       const expense = openDispute(ctx, user, group);
-      if (!expense) return reply("None of your expenses are disputed right now.");
+      if (!expense) return reply("None of your expenses are flagged right now.");
       if (cmd.type === "withdraw") {
         clearPrompt(ctx, user.id, "fix");
         return withdraw(ctx, user, expense, reply);
       }
       const prompt = getPrompt(ctx, user.id, "fix");
       const cents = cmd.type === "fix" ? cmd.cents : prompt?.expenseId === expense.id ? prompt.suggestedCents : undefined;
-      if (!cents) return reply(`What should the new total for ${expense.description} be? Reply like "make it $30", or WITHDRAW to remove it.`);
+      if (!cents) return reply(`What should the new total for ${expense.description} be? Reply like "make it $30", or REMOVE to delete it.`);
       clearPrompt(ctx, user.id, "fix");
       return revise(ctx, user, expense, { totalCents: cents }, reply);
     }
@@ -225,28 +233,25 @@ function balanceText(ctx: Ctx, user: User, group: Group): string {
   const debts = groupDebts(ctx, group.id);
   const iOwe = debts.filter((d) => d.fromId === user.id).map((d) => `${nameOf(getUser(ctx, d.toId))} ${$(d.cents)}`);
   const owedMe = debts.filter((d) => d.toId === user.id).map((d) => `${nameOf(getUser(ctx, d.fromId))} owes you ${$(d.cents)}`);
-  const pending = pendingSharesFor(ctx, user.id).filter((p) => p.group.id === group.id).length;
   const lines = [`${group.name}:`];
   if (iOwe.length) lines.push(`You owe ${listOf(iOwe)}.`);
   if (owedMe.length) lines.push(`${owedMe.join(". ")}.`);
   if (!iOwe.length && !owedMe.length) lines.push("You're all settled up.");
-  if (pending) lines.push(`${pending} expense${pending > 1 ? "s" : ""} waiting on your OK (reply YES or DISPUTE).`);
   const mineDisputed = userSharesInGroup(ctx, user.id, group.id).filter((d) => d.share.status === "disputed");
-  for (const d of mineDisputed) lines.push(`⏸ You disputed ${d.expense.description} ${$(d.expense.totalCents)} (waiting on ${nameOf(d.payer)}).`);
+  for (const d of mineDisputed) lines.push(`⏸ You flagged ${d.expense.description} ${$(d.expense.totalCents)} (waiting on ${nameOf(d.payer)}).`);
   for (const e of disputedExpensesOf(ctx, user.id, group.id)) {
-    lines.push(`⏸ Your ${e.description} ${$(e.totalCents)} is disputed. Reply with a new amount (like "make it $${Math.max(1, Math.round(e.totalCents / 200))}"), WITHDRAW, or send a receipt.`);
+    lines.push(`⏸ Your ${e.description} ${$(e.totalCents)} was flagged. Reply with a new amount (like "make it $${Math.max(1, Math.round(e.totalCents / 200))}"), REMOVE, or send the receipt.`);
   }
   return lines.join("\n");
 }
 
 async function settle(ctx: Ctx, user: User, group: Group, reply: Reply) {
   const debts = groupDebts(ctx, group.id);
-  if (debts.length === 0) {
-    const pending = membersOf(ctx, group.id).reduce((n, m) => n + pendingSharesFor(ctx, m.id).filter((p) => p.group.id === group.id).length, 0);
-    return reply(`Everyone's settled up in ${group.name} 🎉${pending ? ` (${pending} expense share${pending > 1 ? "s are" : " is"} still waiting for approval.)` : ""}`);
-  }
+  if (debts.length === 0) return reply(`Everyone's settled up in ${group.name} 🎉`);
+  // From now on Tab nudges anyone who still owes (and not before: no nagging mid-trip).
+  markSettleRequested(ctx, group.id);
   const summary = debts.map((d) => `• ${nameOf(getUser(ctx, d.fromId))} → ${nameOf(getUser(ctx, d.toId))} ${$(d.cents)}`);
-  await reply(`Sent settle-up texts for ${group.name}:\n${summary.join("\n")}`);
+  await reply(`Settling up ${group.name}. I texted everyone their total:\n${summary.join("\n")}\nI'll remind anyone who hasn't paid.`);
   for (const debtorId of new Set(debts.map((d) => d.fromId))) {
     const text = settleText(ctx, group, debtorId);
     if (text) await dm(ctx, debtorId, text);
@@ -286,69 +291,47 @@ async function pay(ctx: Ctx, user: User, group: Group, who: string | undefined, 
 
 // ------------------------------------------------------------------ approvals & disputes
 
-/** The numbered list the user last saw (if still valid), otherwise their current pending shares. */
-function numberedPending(ctx: Ctx, user: User): ShareDetail[] {
+/**
+ * "YES" / "OK". In the running-tab model nothing needs approving, so this is
+ * either a payer taking the amount someone suggested when they flagged an
+ * expense, or a leftover approval from the old flow.
+ */
+async function approve(ctx: Ctx, user: User, reply: Reply) {
+  const group = activeGroup(ctx, user);
+  const flagged = openDispute(ctx, user, group);
+  const prompt = getPrompt(ctx, user.id, "fix");
+  if (flagged && prompt?.expenseId === flagged.id && prompt.suggestedCents) {
+    clearPrompt(ctx, user.id, "fix");
+    return revise(ctx, user, flagged, { totalCents: prompt.suggestedCents }, reply);
+  }
   const pending = pendingSharesFor(ctx, user.id);
-  const prompt = getPrompt(ctx, user.id, "approve");
-  if (!prompt) return pending;
-  const stillPending = new Set(pending.map((p) => p.share.id));
-  const listed = shareDetails(ctx, prompt.shareIds);
-  return listed.every((d) => stillPending.has(d.share.id)) ? listed : pending;
+  if (pending.length === 0) return reply(group ? `👍 ${group.name}: ${runningTotal(ctx, group.id, user.id)}.` : "👍");
+  for (const t of pending) applyShareAction(ctx, t.share.id, { type: "approve", actorId: user.id, via: "reply" });
+  return reply(`✅ Got it: ${listOf(pending.map((t) => `${t.expense.description} (your share ${$(t.share.cents)})`))}.`);
 }
 
-async function approve(ctx: Ctx, user: User, cmd: Extract<Command, { type: "yes" }>, reply: Reply) {
-  const list = numberedPending(ctx, user);
-  if (list.length === 0) return reply("Nothing is waiting on your OK right now.");
-
-  let targets: ShareDetail[];
-  if (cmd.all) targets = list;
-  else if (cmd.numbers.length) {
-    const bad = cmd.numbers.filter((n) => n < 1 || n > list.length);
-    if (bad.length) return reply(`I don't have a #${bad[0]}. ${approvalText(list)}`);
-    targets = [...new Set(cmd.numbers)].map((n) => list[n - 1]!);
-  } else if (list.length === 1) targets = list;
-  else return reply(`Which ones? ${approvalText(list)}`);
-
-  const done: string[] = [];
-  for (const t of targets) {
-    const r = applyShareAction(ctx, t.share.id, { type: "approve", actorId: user.id, via: "reply" });
-    if (r.ok) done.push(`${t.expense.description} (your share ${$(t.share.cents)})`);
-  }
-  await reply(`✅ Approved: ${listOf(done)}.`);
-
-  // Tell payers when everyone has approved their expense.
-  for (const t of targets) {
-    const shares = sharesOf(ctx, t.expense.id);
-    if (shares.every((s) => s.status === "approved")) {
-      await dm(ctx, t.payer.id, `✅ Everyone approved ${t.expense.description} ${$(t.expense.totalCents)} in ${t.group.name}.`);
-    }
-  }
-  const remaining = pendingSharesFor(ctx, user.id).length;
-  if (remaining > 0) await sendApprovalRequests(ctx, user.id, "Still waiting on you:");
-}
-
+/**
+ * "nope, I didn't eat": flag one of your shares so it stops counting until the
+ * payer fixes it. Which one: an expense named in the message, else the last one
+ * Tab told you about, else your most recent.
+ */
 async function dispute(ctx: Ctx, user: User, cmd: Extract<Command, { type: "dispute" }>, reply: Reply) {
-  const list = numberedPending(ctx, user);
-  let target: ShareDetail | undefined;
-  if (cmd.number !== undefined) {
-    target = list[cmd.number - 1];
-    if (!target) return reply(`I don't have a #${cmd.number}. ${list.length ? approvalText(list) : ""}`.trim());
-  } else if (list.length === 1) target = list[0];
-  else if (list.length > 1) return reply(`Which one? Reply DISPUTE <number> <reason>.\n${approvalText(list)}`);
-  else {
-    // Nothing pending: allow disputing the most recent share they already approved.
-    const group = activeGroup(ctx, user);
-    target = group
-      ? userSharesInGroup(ctx, user.id, group.id).find((d) => d.share.status === "approved" && d.share.approvedVia !== "payer")
-      : undefined;
-  }
-  if (!target) return reply("There's nothing for you to dispute right now.");
-  if (!cmd.reason) return reply(`What's wrong with ${target.expense.description}? Reply DISPUTE${cmd.number ? ` ${cmd.number}` : ""} <reason>.`);
-  if (!(await disputeShare(ctx, user, target, cmd.reason))) return reply("I couldn't dispute that one.");
-  await reply(`Got it. I told ${nameOf(target.payer)}, and your ${$(target.share.cents)} share of ${target.expense.description} won't count until it's sorted out.`);
+  const group = activeGroup(ctx, user);
+  if (!group) return reply("There's nothing for you to flag right now.");
+  const mine = userSharesInGroup(ctx, user.id, group.id).filter((d) => d.share.approvedVia !== "payer" && d.share.status !== "rejected");
+  const flaggable = mine.filter((d) => d.share.status !== "disputed");
+  const named = cmd.reason ? flaggable.find((d) => sameDescription(d.expense.description, cmd.reason)) : undefined;
+  const notice = getPrompt(ctx, user.id, "notice");
+  const target = named ?? flaggable.find((d) => d.share.id === notice?.shareId) ?? flaggable[0];
+  if (!target) return reply("There's nothing for you to flag right now.");
+  if (!cmd.reason) return reply(`What's off with ${target.expense.description} ${$(target.expense.totalCents)}? Reply like "nope, I didn't eat".`);
+  if (!(await disputeShare(ctx, user, target, cmd.reason))) return reply("I couldn't flag that one.");
+  await reply(
+    `Got it, I let ${nameOf(target.payer)} know. Your ${$(target.share.cents)} share of ${target.expense.description} is on hold until you two sort it out. Running total: ${runningTotal(ctx, group.id, user.id)}.`,
+  );
 }
 
-/** Disputes one specific share (owner only) and asks the payer to fix, withdraw, or add a receipt. */
+/** Flags one specific share (owner only) and asks the payer to fix it, remove it, or add a receipt. */
 export async function disputeShare(ctx: Ctx, user: User, target: ShareDetail, reason: string): Promise<boolean> {
   const r = applyShareAction(ctx, target.share.id, { type: "dispute", actorId: user.id, reason });
   if (!r.ok) return false;
@@ -360,10 +343,11 @@ export async function disputeShare(ctx: Ctx, user: User, target: ShareDetail, re
     { kind: "fix", expenseId: target.expense.id, suggestedCents, suggestedBy: user.id },
     timings(ctx.config).promptTtlMs,
   );
+  const example = Math.max(1, Math.round((suggestedCents ?? target.expense.totalCents / 2) / 100));
   const options = suggestedCents
-    ? `${nameOf(user)} suggests ${$(suggestedCents)}. Reply ACCEPT to change the total to ${$(suggestedCents)}, reply with a different amount (like "make it $${Math.round(suggestedCents / 100)}"), WITHDRAW to remove it, or send a receipt photo.`
-    : `Reply with the new total (like "make it $${Math.max(1, Math.round(target.expense.totalCents / 200))}"), WITHDRAW to remove it, or send a receipt photo.`;
-  await dm(ctx, target.payer.id, `${nameOf(user)} disputed ${target.expense.description} ${$(target.expense.totalCents)}: "${reason}".\n${options}`);
+    ? `${nameOf(user)} suggests ${$(suggestedCents)}. Reply OK to change it to ${$(suggestedCents)}, reply with a different amount (like "make it $${example}"), REMOVE to delete it, or send the receipt.`
+    : `Reply with the new total (like "make it $${example}"), REMOVE to delete it, or send the receipt.`;
+  await dm(ctx, target.payer.id, `${nameOf(user)} flagged ${target.expense.description} ${$(target.expense.totalCents)}: "${reason}".\n${options}`);
   return true;
 }
 
@@ -394,13 +378,14 @@ async function revise(ctx: Ctx, user: User, expense: Expense, change: { totalCen
   } else if (expense.flags.includes("possible_duplicate")) flags.push("possible_duplicate");
 
   const shares = reviseExpense(ctx, expense.id, user.id, { totalCents, shares: splitEqual(totalCents, participantIds, expense.payerId), flags, receipt: change.receipt });
-  const others = shares.filter((s) => s.userId !== user.id).map((s) => s.userId);
+  const others = shares.filter((s) => s.userId !== user.id);
   await reply(
-    `Updated ${expense.description}: ${$(totalCents)} (${flagBadges(flags, receipt?.totalCents)}). I asked ${listOf(others.map((id) => nameOf(getUser(ctx, id))))} to approve again.`,
+    `Updated ${expense.description}: ${$(totalCents)} (${flagBadges(flags, receipt?.totalCents)}). I let ${listOf(others.map((s) => nameOf(getUser(ctx, s.userId))))} know.`,
   );
-  for (const id of others) {
-    if (change.receipt) await sendReceiptPhoto(ctx, id, expense);
-    await sendApprovalRequests(ctx, id, `${nameOf(user)} updated ${expense.description}${change.receipt ? " and added the receipt above" : ""}.`);
+  for (const d of shareDetails(ctx, others.map((s) => s.id))) {
+    if (change.receipt) await sendReceiptPhoto(ctx, d.share.userId, expense);
+    const what = change.totalCents !== undefined && change.totalCents !== expense.totalCents ? ` to ${$(totalCents)}` : "";
+    await sendExpenseNotice(ctx, d, `${nameOf(user)} updated ${expense.description}${what}${change.receipt ? " and added the receipt above" : ""}.`);
   }
 }
 
@@ -556,7 +541,7 @@ async function recordExpense(
   const disputedTwin = disputedExpensesOf(ctx, user.id, group.id).find((e) => sameDescription(e.description, description));
   if (disputedTwin) {
     clearPrompt(ctx, user.id, "fix");
-    await reply(`That sounds like the disputed ${disputedTwin.description} (${$(disputedTwin.totalCents)}), so I updated it instead of adding a new one.`);
+    await reply(`That sounds like the flagged ${disputedTwin.description} (${$(disputedTwin.totalCents)}), so I updated it instead of adding a new one.`);
     if (input.photo) saveReceiptImage(ctx, disputedTwin.id, input.photo.mimeType, input.photo.data);
     return revise(ctx, user, disputedTwin, { totalCents: result.totalCents, receipt: input.receipt }, reply);
   }
@@ -575,13 +560,13 @@ async function recordExpense(
   const others = shares.filter((s) => s.userId !== user.id);
   await reply(
     `Logged to ${group.name}: ${expense.description} ${$(expense.totalCents)} · ${splitSummary(expense.totalCents, shares.map((s) => s.cents))} · ` +
-      `${flagBadges(expense.flags, expense.receiptTotalCents)}. I've asked ${listOf(others.map((s) => nameOf(getUser(ctx, s.userId))))} to approve.`,
+      `${flagBadges(expense.flags, expense.receiptTotalCents)}. I let ${listOf(others.map((s) => nameOf(getUser(ctx, s.userId))))} know. Running total: ${runningTotal(ctx, group.id, user.id)}.`,
   );
   if (input.photo) saveReceiptImage(ctx, expense.id, input.photo.mimeType, input.photo.data);
-  for (const s of others) {
-    // The photo goes first so the approval request right below it has the evidence attached.
-    if (input.photo) await sendReceiptPhoto(ctx, s.userId, expense);
-    await sendApprovalRequests(ctx, s.userId);
+  for (const d of shareDetails(ctx, others.map((s) => s.id))) {
+    // The photo goes first so the heads-up right below it has the evidence attached.
+    if (input.photo) await sendReceiptPhoto(ctx, d.share.userId, expense);
+    await sendExpenseNotice(ctx, d);
   }
 }
 

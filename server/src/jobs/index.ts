@@ -1,5 +1,5 @@
 import { and, eq, lt } from "drizzle-orm";
-import { sendApprovalRequests, settleText } from "../bot/messages";
+import { settleText } from "../bot/messages";
 import type { Ctx } from "../context";
 import { timings } from "../context";
 import { groups, payments, reminders } from "../db/schema";
@@ -23,7 +23,7 @@ export async function autoApprove(ctx: Ctx): Promise<number> {
       await dm(
         ctx,
         share.userId,
-        `Auto-approved your ${$(share.cents)} share of ${d.expense.description} (${nameOf(d.payer)} had a receipt and I didn't hear back). Reply DISPUTE <reason> if that's wrong.`,
+        `Counted your ${$(share.cents)} share of ${d.expense.description} (${nameOf(d.payer)} had a receipt). Not right? Reply NOPE and what's off.`,
       );
     }
   }
@@ -31,10 +31,10 @@ export async function autoApprove(ctx: Ctx): Promise<number> {
 }
 
 /**
- * Reminders with exponential backoff. The first time we notice something
- * (a debt or a pending share), we just start the clock. After one interval we
- * remind, then wait 2x, 4x, ... between reminders. Once it's resolved, the
- * clock is cleared.
+ * Payment reminders, only for groups where someone has texted SETTLE (Tab keeps
+ * a running tab and doesn't nag people to pay mid-trip). Exponential backoff:
+ * the first time we notice a debt we just start the clock, remind after one
+ * interval, then wait 2x, 4x, ... Once it's paid, the clock is cleared.
  */
 export async function sendReminders(ctx: Ctx): Promise<number> {
   const interval = timings(ctx.config).reminderMs;
@@ -63,9 +63,9 @@ export async function sendReminders(ctx: Ctx): Promise<number> {
     ctx.db.delete(reminders).where(and(eq(reminders.userId, userId), eq(reminders.groupId, groupId), eq(reminders.kind, kind))).run();
 
   for (const group of ctx.db.select().from(groups).all()) {
+    if (!group.settleRequestedAt) continue;
     const debtors = new Set(groupDebts(ctx, group.id).map((d) => d.fromId));
     for (const member of membersOf(ctx, group.id)) {
-      // Unpaid approved balances.
       if (debtors.has(member.id)) {
         if (due(member.id, group.id, "debt")) {
           const text = settleText(ctx, group, member.id);
@@ -75,15 +75,6 @@ export async function sendReminders(ctx: Ctx): Promise<number> {
           }
         }
       } else clear(member.id, group.id, "debt");
-
-      // Shares waiting on their OK.
-      const pending = pendingSharesFor(ctx, member.id).filter((p) => p.group.id === group.id);
-      if (pending.length > 0) {
-        if (due(member.id, group.id, "review")) {
-          await sendApprovalRequests(ctx, member.id, "⏰ Reminder:");
-          sent++;
-        }
-      } else clear(member.id, group.id, "review");
     }
   }
   return sent;

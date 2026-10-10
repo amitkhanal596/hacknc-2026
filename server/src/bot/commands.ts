@@ -9,6 +9,7 @@ export type Command =
   | { type: "groups" }
   | { type: "name"; name: string }
   | { type: "balance" }
+  | { type: "summary" }
   | { type: "settle" }
   | { type: "pay"; who?: string }
   | { type: "why"; who?: string }
@@ -63,7 +64,13 @@ export function parseCommand(input: string): Command | undefined {
   if ((m = text.match(/^(?:use|switch(?:\s+to)?)\s+(.+)$/i))) return { type: "use", query: m[1]!.trim() };
   if (/^(groups|my groups|trips|list)$/i.test(text)) return { type: "groups" };
   if ((m = text.match(/^(?:name|call me|my name is)\s+([a-z][a-z .'-]{0,30})$/i))) return { type: "name", name: titleCase(m[1]!) };
-  if (/^(balance|balances|bal|status|tab|what do i owe\??|how much do i owe\??)$/i.test(text)) return { type: "balance" };
+  if (/^(balance|balances|bal|status|what do i owe\??|how much do i owe\??)$/i.test(text)) return { type: "balance" };
+  // "hey what are my expenses", "summary", "my tab", "show me my tab", "recap", "where do I stand?"
+  if (
+    /^(?:(?:hey|hi|yo|ok|so)[,!]?\s+)?(?:summary|recap|tab|my tab|expenses|my expenses|(?:what(?:'s| is| are)|show(?: me)?|send(?: me)?|can i see)\s+(?:my|the)\s+(?:expenses|tab|summary|total|running total)|where do i stand|how am i doing)\s*(?:today|so far)?[?.!]*$/i.test(text)
+  ) {
+    return { type: "summary" };
+  }
   if (/^settle(\s+up)?!?$/i.test(text)) return { type: "settle" };
 
   // "PAY" or "PAY Amit". "pay me $20" is NOT a command: it falls through to the
@@ -83,7 +90,8 @@ export function parseCommand(input: string): Command | undefined {
     return { type: "yes", all: false, numbers: arg ? arg.match(/\d+/g)!.map(Number) : [] };
   }
 
-  if ((m = text.match(/^(?:dispute|reject|wrong)\b(?:\s+#?(\d+)\b)?[\s:,-]*(.*)$/i))) {
+  // "nope, I didn't eat" (the friendly way). DISPUTE/FLAG/WRONG still work.
+  if ((m = text.match(/^(?:nope|nah|not right|not mine|that'?s (?:wrong|not right)|flag|dispute|reject|wrong)\b(?:\s+#?(\d+)\b)?[\s:,.!-]*(.*)$/i))) {
     return { type: "dispute", number: m[1] ? Number(m[1]) : undefined, reason: m[2]!.trim() };
   }
 
@@ -95,7 +103,7 @@ export function parseCommand(input: string): Command | undefined {
   // Payer accepting the amount the other person suggested in their dispute.
   if (/^(accept|accepted|accept it|deal)[.!]*$/i.test(text)) return { type: "accept" };
 
-  if (/^(withdraw|remove it|delete it|cancel it|withdraw it)$/i.test(text)) return { type: "withdraw" };
+  if (/^(remove|delete|withdraw|remove it|delete it|cancel it|withdraw it|scrap it)[.!]*$/i.test(text)) return { type: "withdraw" };
   if (/^(payouts?|connect bank|get paid|set up payouts)$/i.test(text)) return { type: "payouts" };
 
   return undefined;

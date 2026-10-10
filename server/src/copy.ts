@@ -7,10 +7,11 @@ export const HELP = `Here's what I can do:
 • Text me an expense: "paid $80 for gas" or send a receipt photo
 • NEW <trip name>: start a group
 • JOIN <code>: join a group
-• BALANCE: what you owe and are owed
-• YES / DISPUTE <reason>: approve or dispute your share
+• SUMMARY (or "what are my expenses"): your tab as a card
+• BALANCE: your running total, short
+• NOPE <what's off>: flag an expense that isn't right
 • WHY: the breakdown behind what you owe
-• SETTLE: send everyone their totals
+• SETTLE: done? Sends everyone their final total
 • PAY: pay what you owe in USDC
 • USE <group>: switch groups · GROUPS: list them
 • NAME <your name>: change what I call you`;

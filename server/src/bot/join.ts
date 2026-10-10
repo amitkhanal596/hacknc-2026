@@ -37,7 +37,7 @@ export async function joinGroup(ctx: Ctx, userIn: User, group: Group, name?: str
   await dm(
     ctx,
     user.id,
-    `You're in ${group.name}${others.length ? ` with ${listOf(others)}` : ""}! Text me receipts or "paid $X for Y" and I'll keep track. I'll ask before you owe anything.`,
+    `You're in ${group.name}${others.length ? ` with ${listOf(others)}` : ""}! Text me receipts or "paid $X for Y" and I'll keep a running tab. I'll text you whenever something's logged, and nobody pays until someone texts SETTLE.`,
   );
   if (user.displayName) {
     await announceJoin(ctx, user.id, group);

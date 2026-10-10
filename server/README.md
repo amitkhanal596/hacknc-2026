@@ -33,7 +33,7 @@ Needs Node 22+. No Bun or global installs required.
 | `/as <name>` | Switch who's texting. New names get a fake phone number. |
 | `/receipt <amount> [merchant] [\| caption]` | Send a fake receipt photo (no Gemini needed). |
 | `/photo <file> [\| caption]` | Send a real image (Gemini reads it). |
-| `/advance <minutes>` | Move the clock forward, then run jobs (auto-approve, reminders). |
+| `/advance <minutes>` | Move the clock forward, then run jobs (payment reminders after SETTLE). |
 | `/jobs` | Run jobs now. |
 | `/who`, `/quit` | |
 
@@ -71,8 +71,8 @@ src/
   store/                  database reads/writes (users, groups, expenses+shares+audit, payments, prompts)
   payments/               pay router (caps, Solana, Apple Pay, webhooks), Solana chain + wallets, Stripe rail, signed tokens
   api/                    Hono app: extension API, pay page, Stripe webhook, Connect return
-  jobs/                   auto-approve, reminders with backoff, held-payment sweep, stale-payment expiry
-  web/                    HTML: home/signup page (landing.ts), join, pay and status pages
+  jobs/                   payment reminders (after SETTLE) with backoff, held-payment sweep, stale-payment expiry
+  web/                    HTML: home/signup page (landing.ts), tab page + iMessage preview card (tab-page.ts, card.ts), join, pay and status pages
   copy.ts notify.ts       all user-facing message text; DM send + log
 drizzle/                  SQL migrations (run automatically on boot)
 scripts/                  setup-devnet, phone (iPhone launcher), photon-register, check-photon, check-stripe
@@ -83,6 +83,6 @@ Changing the schema: edit `src/db/schema.ts`, then `npx drizzle-kit generate --n
 
 ## Bot commands (1:1 DMs)
 
-`NEW <name>` (replies with an invite link to `/j/<code>`) · `JOIN <code> [- I'm Name]` · `USE <group>` · `GROUPS` · `NAME <name>` · `BALANCE` · `SETTLE` · `PAY [name]` · `WHY [name]` · `YES` / `YES ALL` / `YES 1 3` · `DISPUTE [n] <reason>` · after a dispute the payer can reply with a new amount in plain words ("$30 is fine", "make it 40", `FIX 40`), `ACCEPT` the amount the disputer suggested ("DISPUTE should be $30"), or `WITHDRAW` · `PAYOUTS` · `HELP`
+`NEW <name>` (replies with an invite link to `/j/<code>`) · `SUMMARY` / "what are my expenses" / "my tab" (text summary + rich link card to `/t/<token>`) · `JOIN <code> [- I'm Name]` · `USE <group>` · `GROUPS` · `NAME <name>` · `BALANCE` · `SETTLE` · `PAY [name]` · `WHY [name]` · `NOPE <what's off>` (flag your share) · after a NOPE the payer can reply with a new amount in plain words ("$30 is fine", "make it 40", `FIX 40`), `OK` the amount suggested ("nope, should be $30"), or `REMOVE` · `PAYOUTS` · `HELP`
 
 Anything else is treated as a possible expense: text ("paid $80 for gas, split with jake and sam"), a receipt photo, or a screenshot of a chat message.

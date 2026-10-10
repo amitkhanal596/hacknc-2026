@@ -1,0 +1,1 @@
+ALTER TABLE `groups` ADD `settle_requested_at` integer;

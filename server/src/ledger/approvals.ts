@@ -51,13 +51,19 @@ export function transition(share: ShareState, action: ShareAction, now: number):
   }
 }
 
-/** Initial state for a new share. The payer's own share is approved automatically. */
+/**
+ * Initial state for a new share. By default (the running-tab model) everyone's
+ * share counts as soon as the expense is logged; anyone can flag theirs to take
+ * it out until it's sorted. `requireApproval` restores the old "reply YES" flow,
+ * where receipt-backed shares auto-approve after a while.
+ */
 export function initialShare(opts: {
   userId: string;
   payerId: string;
   hasReceipt: boolean;
   now: number;
   autoApproveMs?: number;
+  requireApproval?: boolean;
 }): {
   status: ShareStatus;
   approvedVia: ApprovedVia | null;
@@ -66,6 +72,9 @@ export function initialShare(opts: {
 } {
   if (opts.userId === opts.payerId) {
     return { status: "approved", approvedVia: "payer", decidedAt: opts.now, autoApproveAt: null };
+  }
+  if (!opts.requireApproval) {
+    return { status: "approved", approvedVia: "auto", decidedAt: opts.now, autoApproveAt: null };
   }
   return {
     status: "pending",

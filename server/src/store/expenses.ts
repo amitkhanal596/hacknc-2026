@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNotNull, lte, ne } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, lte, ne, sql } from "drizzle-orm";
 import type { Ctx } from "../context";
 import { timings } from "../context";
 import {
@@ -146,7 +146,7 @@ export function pendingSharesFor(ctx: Ctx, userId: string): ShareDetail[] {
 export function userSharesInGroup(ctx: Ctx, userId: string, groupId: string): ShareDetail[] {
   return detailQuery(ctx)
     .where(and(eq(expenseShares.userId, userId), eq(expenses.groupId, groupId), eq(expenses.status, "active")))
-    .orderBy(desc(expenses.createdAt))
+    .orderBy(desc(expenses.createdAt), desc(sql`${expenses}.rowid`))
     .all();
 }
 

@@ -23,6 +23,8 @@ export const groups = sqliteTable("groups", {
   kind: text("kind", { enum: ["trip", "roommates", "dinner", "club"] }).notNull().default("trip"),
   joinCode: text("join_code").notNull().unique(),
   organizerId: text("organizer_id").notNull(),
+  /** When someone last texted SETTLE. Tab only nudges people to pay after this. */
+  settleRequestedAt: integer("settle_requested_at"),
   createdAt: integer("created_at").notNull(),
 });
 
@@ -164,8 +166,10 @@ export const authCodes = sqliteTable("auth_codes", {
  * prompt per user per kind; a new one replaces the old, and expired ones are ignored.
  */
 export type PendingPrompt =
-  /** Numbered list of shares we showed them: "YES 1 3" refers to these. */
+  /** Numbered list of shares we showed them: "YES 1 3" refers to these (legacy approval flow). */
   | { kind: "approve"; shareIds: string[] }
+  /** The last expense we told them about: a bare "nope, I didn't eat" refers to this. */
+  | { kind: "notice"; shareId: string }
   /** We asked "what was the $20 for?"; the next message is the reason. */
   | { kind: "reason"; groupId: string; amountCents: number; participants: "all" | string[]; sourceText: string | null }
   /** We asked "what should I call you?". Once answered, tell this group they joined. */

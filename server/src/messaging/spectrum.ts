@@ -1,4 +1,4 @@
-import { attachment, Spectrum, type Message, type Space } from "spectrum-ts";
+import { attachment, richlink, Spectrum, type Message, type Space } from "spectrum-ts";
 import { imessage } from "spectrum-ts/providers/imessage";
 import { normalizeHandle, type DMHandler, type InboundImage, type Messenger, type OutboundImage } from "./types";
 
@@ -45,6 +45,15 @@ export class SpectrumMessenger implements Messenger {
 
   async sendImage(to: string, image: OutboundImage): Promise<void> {
     await (await this.spaceFor(to)).send(attachment(image.data, { mimeType: image.mimeType, name: image.name }));
+  }
+
+  async sendLink(to: string, url: string): Promise<void> {
+    const space = await this.spaceFor(to);
+    try {
+      await space.send(richlink(url));
+    } catch {
+      await space.send(url); // plain text still gets a preview in iMessage
+    }
   }
 
   async listen(handler: DMHandler): Promise<void> {

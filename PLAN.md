@@ -12,9 +12,9 @@ Group trips, roommates, dinners, and clubs all produce scattered costs. Someone 
 ## Solution
 Each person texts **Tab** directly (1:1 iMessage). Behind the scenes, Tab groups people into a shared **group**, like "Tahoe Trip." It:
 1. **Collects.** Members text the bot receipt photos, screenshots, or "paid $80 for gas, split with everyone." Gemini pulls out the amount, payer, and who's included.
-2. **Confirms.** The bot DMs **each affected person** their share to approve. Nobody owes anything they didn't agree to.
+2. **Keeps a running tab.** Each affected person gets a heads-up with their share and running total. It counts right away. If something's off, they reply **NOPE** and that share goes on hold.
 3. **Tracks.** It keeps the group ledger: who owes whom, netted between each pair of people so every dollar traces back to a real expense.
-4. **Explains.** Anyone can text *"why do I owe this?"* and get the original message, the receipt, and the math.
+4. **Explains.** Anyone can text *"what are my expenses?"* and get their tab as a **rich card in iMessage** (running total, who owes whom), which opens a full "Your Tab" page. *"Why do I owe this?"* gives the original message, the receipt, and the math.
 5. **Settles.** Each debtor gets a DM with two ways to pay: reply `PAY` (USDC from their Tab wallet on Solana) or tap a link to **pay with Apple Pay**.
 6. **Reminds.** It nudges people about unpaid balances and shares they haven't reviewed.
 
@@ -30,7 +30,10 @@ The **native iMessage extension** is how Tab appears in the *real* group chat. M
 | Apple Pay placement | **Web** (Stripe Express Checkout on the pay page). No paid Apple Developer account needed. The extension's Pay button opens that page. |
 | Creditor payouts | Creditors who want card or Apple Pay payments connect Stripe once (onboarding link sent by DM). Money paid before they connect is **held** and transferred once they do. |
 | UI | **Native iMessage extension** (Swift/SwiftUI) as the in-group-chat experience. A rich link preview plus the mobile pay page covers everyone else. |
-| Approval | **Each person approves their own share** (DM reply or extension). If ignored, a share auto-approves after 24h **only if there's a receipt**. |
+| Running tab | **Expenses count as soon as they're logged.** Everyone gets a heads-up with their share and running total. Nothing to approve. Anyone can reply **NOPE + what's off** to put their share on hold (no "dispute" wording). |
+| Your tab | Text **"what are my expenses"** / SUMMARY / "my tab" → short text + a **rich link card** (Partiful-style preview image) that opens a Frutiger Aero "Your Tab" page with every expense, your share, and who owes whom. |
+| Netting | When two people owe each other, **only the difference is paid** ($20 one way, $25 the other → one $5 payment). The summary shows the subtraction. |
+| When to pay | **Only when someone texts SETTLE.** No payment requests or reminders mid-trip. Reminders start only after a SETTLE. |
 | Receipts | **Optional but marked.** Text-only expenses need a stated reason and get a "no receipt" badge. |
 | Transparency | **"Why do I owe this?"** answers come only from ledger records, never made up. |
 | MVP use case | **Trips.** Roommates, restaurants, and clubs are stretch goals on the same model. |
@@ -39,9 +42,10 @@ The **native iMessage extension** is how Tab appears in the *real* group chat. M
 1. **Create a group:** Amit texts "new trip Tahoe." The bot creates the group and sends a join code plus a ready-to-paste invite for the real group chat.
 2. **Join:** Jake taps the invite (or texts `JOIN TAHOE42`). The bot adds him, makes his Solana wallet, funds it with test USDC, and explains how Tab works.
 3. **Log an expense:** Amit DMs a receipt photo plus "gas, everyone." The bot confirms to Amit:
-   > Logged to Tahoe Trip: Gas $80.00 · split 4 ways ($20 each) · 🧾 receipt matched. I've asked Jake, Sam, and Priya to approve.
-4. **Approve / dispute:** each participant gets their own DM:
-   > Amit logged **Gas $80.00** (🧾 receipt) for Tahoe Trip. Your share: **$20.00**. Reply YES, DISPUTE + reason, or WHY.
+   > Logged to Tahoe Trip: Gas $80.00 · split 4 ways ($20 each) · 🧾 receipt matched. I let Jake, Sam and Priya know. Running total: you're owed $60.00.
+4. **Heads-up:** each participant gets the receipt photo, then:
+   > Amit logged **Gas $80.00** (🧾 receipt matched) for Tahoe Trip. Your share: **$20.00** · Running total: you owe $46.66. Not right? Reply NOPE and what's off.
+   If someone replies "nope, I didn't ride", their share goes on hold and the payer can reply with a new amount ("make it $60"), OK a suggested amount, REMOVE it, or send the receipt.
 5. **Why:** "why do I owe Amit $42?" returns the itemized breakdown with sources.
 6. **Settle up:** anyone texts `SETTLE` (or taps it in the extension). The bot works out who owes whom and DMs each debtor:
    > You owe Amit $42.10 for Tahoe Trip. Reply **PAY** to send USDC from your Tab wallet, or **pay with Apple Pay**: tab.app/p/… · Reply WHY for the breakdown.
@@ -61,17 +65,17 @@ The **native iMessage extension** is how Tab appears in the *real* group chat. M
 | Confirmation | On-chain signature, explorer link | Stripe webhook `payment_intent.succeeded` |
 | Hackathon mode | Devnet, our own tUSDC token | Stripe test mode (real Wallet card, not charged) |
 
-Both options settle the **same ledger**. A payment is valid only up to the debtor's current approved debt to that creditor.
+Both options settle the **same ledger**. A payment is valid only up to what the debtor currently owes that creditor (flagged shares excluded).
 
 ## Trust & anti-abuse
 - **A reason is required.** "Pay me $20" with no reason isn't recorded, and the bot asks what it was for.
-- **Per-person approval.** Only *you* can approve *your* share, and approval requests come to *your* DM.
+- **Everyone sees every charge.** Each person gets a heads-up (with the receipt photo) for every expense they're in. Only *you* can flag *your* share, and a flagged share stops counting until it's fixed.
 - **Receipt checks.** Gemini reads the receipt total. If the claimed amount is off by more than $1 or 5%, the expense gets an `amount_mismatch` flag.
 - **Duplicate detection.** A matching image hash, or the same merchant + total + date, gets a `possible_duplicate` flag.
-- **Receipt badge.** Text-only expenses are labeled ⚠️ no receipt and never auto-approve.
-- **Disputes.** Any edit to the amount or people resets the affected shares to pending.
-- **Audit trail.** Every create, edit, approve, dispute, and payment is logged and shown in the "why" view.
-- **Payments are capped.** Amounts can't exceed approved debt. A payment only counts as paid after the chain confirms it or Stripe's webhook arrives, never from the browser saying so.
+- **Receipt badge.** Text-only expenses are labeled ⚠️ no receipt.
+- **Flags (NOPE).** The payer fixes the amount, takes the suggested one, removes it, or adds a receipt. Everyone gets a fresh heads-up.
+- **Audit trail.** Every create, edit, flag, and payment is logged and shown in the "why" view.
+- **Payments are capped.** Amounts can't exceed what's owed. A payment only counts as paid after the chain confirms it or Stripe's webhook arrives, never from the browser saying so.
 
 Known limit: someone with a real receipt for something unrelated can still try it. Per-person approval and full visibility make that easy to catch.
 
@@ -126,6 +130,6 @@ Known limit: someone with a real receipt for something unrelated can still try i
 | Spectrum rate limits when messaging each person | Approvals batched per person. A digest replaces a stream of updates. Demo mode keeps groups small. |
 | Apple Pay web needs a verified HTTPS domain | Deploy early (Railway/Fly) and register the domain with Stripe in the spike. No changing ngrok URLs. |
 | Creditor hasn't onboarded to Stripe | Charge goes to our account and is held, then transferred automatically after onboarding. The bot nudges the creditor. |
-| Gemini misreads who's included | Nothing is owed until each person approves their own share. |
-| Fake or inflated expenses | Required reason, receipt check, duplicate detection, approvals, disputes, audit trail. |
+| Gemini misreads who's included | Everyone gets a heads-up and can reply NOPE; the share stops counting until fixed. |
+| Fake or inflated expenses | Required reason, receipt check, duplicate detection, a heads-up to every person, NOPE flags, audit trail. |
 | Backend holding wallet keys | Devnet only. Mainnet would need an embedded-wallet provider (Privy/Crossmint/Turnkey). |
