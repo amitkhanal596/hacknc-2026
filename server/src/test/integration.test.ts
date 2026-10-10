@@ -337,7 +337,8 @@ describe("private sign-in links and evidence ownership", () => {
       })
       .run();
     let delivered = "";
-    h.setLoginDelivery(async (identity, token) => {
+    h.setLoginDelivery(async (identity, token, inviteCode) => {
+      expect(inviteCode).toBe("test-invitation-1234567890");
       expect(identity).toBe("verified@example.test");
       delivered = token;
     });
@@ -345,6 +346,7 @@ describe("private sign-in links and evidence ownership", () => {
       (
         await c.request("/api/auth/start", {
           providerUserId: "verified@example.test",
+          inviteCode: "test-invitation-1234567890",
         })
       ).response.status,
     ).toBe(200);

@@ -9,6 +9,9 @@ export function InviteCard({
   authenticated: boolean;
   onJoin: () => void;
 }) {
+  const [verifying, setVerifying] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [status, setStatus] = useState("");
   return (
     <section className="panel invite-card">
       <div className="eyebrow">YOU’RE INVITED</div>
@@ -18,7 +21,10 @@ export function InviteCard({
         updates. No wallet needed. Joining never authorizes a payment. Text STOP
         to pause updates.
       </p>
-      <p>Message Tab privately with:</p>
+      {!authenticated && (
+        <button onClick={() => setVerifying(true)}>Accept invitation</button>
+      )}
+      <p>Join directly in iMessage by sending:</p>
       <code className="invite-code">join {code}</code>
       <p className="muted">
         Use your own Photon-assigned conversation. During this pilot, the
@@ -26,8 +32,64 @@ export function InviteCard({
       </p>
       {authenticated ? (
         <button onClick={onJoin}>Accept invitation</button>
+      ) : verifying ? (
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault();
+            const providerUserId = String(
+              new FormData(e.currentTarget).get("inviteIdentity"),
+            ).trim();
+            setPending(true);
+            setStatus("");
+            try {
+              const result = await api<{ message: string }>("/auth/start", {
+                providerUserId,
+                inviteCode: code,
+              });
+              setStatus(
+                result.message +
+                  " Open the link in iMessage, then press Accept invitation. If no message arrives, first send hi to your assigned Tab conversation and try again.",
+              );
+            } catch (error) {
+              setStatus(
+                error instanceof Error
+                  ? error.message
+                  : "Could not request sign-in.",
+              );
+            } finally {
+              setPending(false);
+            }
+          }}
+        >
+          <h3>Verify with iMessage</h3>
+          <p>
+            First send <strong>hi</strong> to your assigned Tab conversation so
+            Tab can recognize you. Then enter your own registered number
+            (including country code) or iMessage email below.
+          </p>
+          <label>
+            Your iMessage number or email
+            <input
+              name="inviteIdentity"
+              autoComplete="username"
+              placeholder="+19195550123"
+              required
+            />
+          </label>
+          <button disabled={pending}>
+            {pending ? "Requesting…" : "Send my sign-in link"}
+          </button>
+          <p>
+            We’ll carry this invitation into your private sign-in link. No
+            password or wallet required.
+          </p>
+          {status && <p role="status">{status}</p>}
+        </form>
       ) : (
-        <p>Or open your private sign-in link, then return here to accept.</p>
+        <p>
+          Accept invitation to verify your identity, or use the iMessage command
+          above.
+        </p>
       )}
     </section>
   );

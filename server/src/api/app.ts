@@ -57,7 +57,12 @@ export function createApp(
     assets = new Assets(ledger, extractor),
     direct = new DirectTabs(ledger, messages, assets, config.APP_BASE_URL);
   let deliverLogin:
-    ((providerId: string, token: string) => Promise<void>) | null = null;
+    | ((
+        providerId: string,
+        token: string,
+        inviteCode?: string,
+      ) => Promise<void>)
+    | null = null;
   let photonState = config.PHOTON_ENABLED ? "connecting" : "simulation";
   const app = new Hono<{ Variables: { userId: string; scope: string } }>();
   app.use(
@@ -221,8 +226,14 @@ export function createApp(
     return c.json({ data: { userId, mode: "DEMO — identity simulation" } });
   });
   app.post("/api/auth/start", async (c) => {
-    const { providerUserId } = z
-      .object({ providerUserId: nonempty })
+    const { providerUserId, inviteCode } = z
+      .object({
+        providerUserId: nonempty,
+        inviteCode: z
+          .string()
+          .regex(/^[A-Za-z0-9_-]{20,100}$/)
+          .optional(),
+      })
       .parse(await c.req.json());
     ensure(
       deliverLogin,
@@ -244,7 +255,7 @@ export function createApp(
       .get();
     if (identity) {
       const token = auth.issue(identity.userId, "login", providerUserId);
-      await deliverLogin(providerUserId, token);
+      await deliverLogin(providerUserId, token, inviteCode);
     }
     return c.json({
       data: {

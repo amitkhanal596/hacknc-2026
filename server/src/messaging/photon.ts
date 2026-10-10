@@ -54,10 +54,10 @@ export async function startPhoton(runtime: Runtime) {
   const provider = imessage(spectrum);
   runtime.setPhotonState("listening");
   // DM recipient derives only from an authenticated provider identity previously observed.
-  runtime.setLoginDelivery(async (providerId, token) => {
+  runtime.setLoginDelivery(async (providerId, token, inviteCode) => {
     const dm = await provider.space.create(providerId);
     await dm.send(
-      `Open your private Tab (this sign-in link expires in 5 minutes and works once): ${runtime.config.APP_BASE_URL}/#login=${token}&identity=${encodeURIComponent(providerId)}\nThis opens your trip; it never authorizes a payment. Do not forward this private link.`,
+      `Open your private Tab (this sign-in link expires in 5 minutes and works once): ${runtime.config.APP_BASE_URL}/#login=${token}&identity=${encodeURIComponent(providerId)}${inviteCode ? `&invite=${encodeURIComponent(inviteCode)}` : ""}\nThis opens your trip; it never authorizes a payment. Do not forward this private link.`,
     );
   });
   const send = async (

@@ -255,17 +255,21 @@ function App() {
         <span className="logo">
           tab<span>↗</span>
         </span>
-        <div className="eyebrow">SHARED MOMENTS. SORTED.</div>
-        <h1>
-          Good trips.
-          <br />
-          Clear tabs.
-        </h1>
-        <p>
-          Track expenses together. Settle your way.
-          <br />
-          No wallet needed to join the conversation.
-        </p>
+        {!inviteCode && (
+          <>
+            <div className="eyebrow">SHARED MOMENTS. SORTED.</div>
+            <h1>
+              Good trips.
+              <br />
+              Clear tabs.
+            </h1>
+            <p>
+              Track expenses together. Settle your way.
+              <br />
+              No wallet needed to join the conversation.
+            </p>
+          </>
+        )}
         {inviteCode && (
           <InviteCard
             code={inviteCode}
