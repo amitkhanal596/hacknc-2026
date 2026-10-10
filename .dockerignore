@@ -1,0 +1,22 @@
+# Allow only application build inputs. Never upload credentials, local databases,
+# editor settings or the separate Photon echo project as Docker build context.
+**
+!Dockerfile
+!package.json
+!bun.lock
+!tsconfig.json
+!vite.config.ts
+!server/
+!server/src/
+!server/src/**
+!scripts/
+!scripts/**
+!web/
+!web/**
+**/.env
+**/.env.*
+**/node_modules
+**/.data
+**/*.sqlite*
+**/*.pem
+**/*.key
