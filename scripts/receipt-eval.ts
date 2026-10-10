@@ -21,7 +21,14 @@ let ok = 0;
 const files = process.argv.slice(2);
 for (const file of files) {
   const started = Date.now();
-  const r = await ai.readReceipt({ bytes: await readFile(file), mimeType: mime[extname(file).toLowerCase()] ?? "image/jpeg" });
+  let r;
+  try {
+    r = await ai.readReceipt({ bytes: await readFile(file), mimeType: mime[extname(file).toLowerCase()] ?? "image/jpeg" });
+  } catch (err) {
+    const e = err as { status?: number; message?: string };
+    console.log(`✗ ${file}: Gemini error${e.status ? ` ${e.status}` : ""}: ${(e.message ?? String(err)).slice(0, 200)}`);
+    continue;
+  }
   const ms = Date.now() - started;
   if (!r) {
     console.log(`✗ ${file}: not recognized as a receipt (${ms}ms)`);

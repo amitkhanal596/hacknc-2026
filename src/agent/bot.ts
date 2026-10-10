@@ -130,7 +130,7 @@ export class Tab {
     this.store.addMember(trip.id, user.id, this.now());
     this.store.setActiveTrip(user.id, trip.id);
 
-    await this.say(user, `${name} created! Paste this in your group chat:\n\n"Join our ${base} tab 👉 ${this.inviteLink(trip)}"`);
+    await this.say(user, `${name} created! Paste this in your group chat:\n\n"Join our ${base} tab 👉 text ${this.cfg.botName} "JOIN ${trip.code}" or tap ${this.inviteLink(trip)}"`);
     if (!user.name) {
       this.store.setPending(user.id, "awaiting_name", {}, this.now());
       await this.say(user, "And what should I call you?");
@@ -623,7 +623,7 @@ export class Tab {
   }
 
   private async link(user: User, trip: Trip) {
-    await this.say(user, `${trip.name}\nInvite friends: ${this.inviteLink(trip)}\nSee everything: ${this.pageLink(trip)}`);
+    await this.say(user, `${trip.name}\nInvite friends: text ${this.cfg.botName} "JOIN ${trip.code}" or ${this.inviteLink(trip)}\nSee everything: ${this.pageLink(trip)}`);
   }
 
   private async help(user: User) {

@@ -72,10 +72,11 @@ npm run dev       # starts the local simulator + web server on :3000
 
 The trip page is at `http://localhost:3000/t/<CODE>`.
 
-**Real iMessage.**
-1. Set `MESSENGER=spectrum` and add `SPECTRUM_PROJECT_ID` / `SPECTRUM_PROJECT_SECRET` from the Photon dashboard.
-2. Expose the server (for example `ngrok http 3000`) and set `PUBLIC_URL` so phones can open the invite and trip links.
-3. Register the organizer's phone with `npm run register -- +19195550101`. Friends are registered automatically when they use the invite link.
+**Real iMessage (demo with fixed people).**
+1. Put `.env` in this folder (next to `package.json`), with `MESSENGER=spectrum` and `SPECTRUM_PROJECT_ID` / `SPECTRUM_PROJECT_SECRET` from the Photon dashboard.
+2. In the Photon dashboard, **Spectrum → Users → Add user**, add each demo person's phone. On the Pro plan every person gets their own **"Texts on"** number: that is the number *they* text Tab at (it can differ per person). Have each person save it as a contact called "Tab".
+3. Organizer texts `new trip Asheville`. Friends text `JOIN <code>` to their Tab number. Done; no web link needed.
+4. Optional: expose the server (`ngrok http 3000`) and set `PUBLIC_URL` so the trip page link works on phones. Then the `/j/<code>` invite link also works for people who aren't pre-registered (it registers them via the Photon API).
 
 **Real Solana (devnet).** Run `npm run solana:setup`, paste the printed values into `.env`, and set `SOLANA_MODE=devnet`.
 
