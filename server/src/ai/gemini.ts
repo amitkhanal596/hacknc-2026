@@ -59,6 +59,7 @@ Rules:
 - Use member ids exactly as given. Never invent ids.
 - If the message doesn't say what the money was for, has_reason must be false.
 - "X owes me $N for Y" / "X owed me $N" means the sender paid and only X shares the cost: participant_ids = [X], split_with_everyone = false, and the sender is NOT included.
+- Paying for one specific person ("paid Ayug's meal", "covered Jake's dinner", "bought Priya a coffee", "got lunch for Sam") means only that person owes it: participant_ids = [that person], sender NOT included. reason = the item without the name (e.g. "Meal", "Dinner").
 - Amounts are in US cents (e.g. $42.10 -> 4210).`;
 
 function memberList(members: Member[]) {
@@ -108,7 +109,7 @@ export class GeminiExtractor implements Extractor {
             ? "quota"
             : e.status === 503 || e.status === 500 || /UNAVAILABLE|high demand|overloaded/i.test(msg)
               ? "busy"
-              : /timed? ?out|abort/i.test(`${e.name} ${msg}`)
+              : e.status === 504 || /timed? ?out|abort|DEADLINE_EXCEEDED|deadline/i.test(`${e.name} ${msg}`)
                 ? "timeout"
                 : e.status === 404
                   ? "quota" // model not available to this key: park it

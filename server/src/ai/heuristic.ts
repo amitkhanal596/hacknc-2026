@@ -47,27 +47,53 @@ const FILLER = new Set([
   "i", "me", "my", "we", "you", "paid", "pay", "spent", "spend", "bought", "covered", "got", "for", "on", "the", "a", "an",
   "split", "with", "and", "everyone", "everybody", "all", "of", "us", "but", "except", "ways", "way", "between", "to",
   "dollars", "dollar", "bucks", "usd", "please", "pls", "plz", "send", "owe", "owes", "back", "just", "it", "was", "is",
-  "people", "evenly", "equally", "each", "total", "hey", "yo", "so",
+  "people", "evenly", "equally", "each", "total", "hey", "yo", "so", "cost", "costs", "costed", "was", "were",
 ]);
+
+/** Does the text name this member, including possessives like "ayug's" or "ayugs"? */
+function mentions(lower: string, name: string): boolean {
+  return new RegExp(`\\b${escapeRegex(name.toLowerCase())}(?:'?s)?\\b`).test(lower);
+}
+
+/**
+ * Paying for one specific person: "paid ayug's meal", "covered Jake's dinner",
+ * "bought Priya a coffee", "got lunch for Sam". Returns those people (never the sender).
+ */
+function paidForSomeone(lower: string, senderId: string, members: Member[]): string[] | undefined {
+  const named = members.filter((m) => m.id !== senderId && m.name);
+  const possessive = named.filter((m) => new RegExp(`\\b${escapeRegex(m.name!.toLowerCase())}'?s\\b`).test(lower));
+  if (possessive.length) return possessive.map((m) => m.id);
+  const bought = named.filter((m) => new RegExp(`\\b(?:bought|got|treated|covered)\\s+${escapeRegex(m.name!.toLowerCase())}\\b`).test(lower));
+  if (bought.length) return bought.map((m) => m.id);
+  const forName = named.filter((m) => new RegExp(`\\bfor\\s+${escapeRegex(m.name!.toLowerCase())}\\b`).test(lower));
+  if (forName.length && !/\b(split|with|and me|me and)\b/.test(lower)) return forName.map((m) => m.id);
+  return undefined;
+}
 
 export function findReason(text: string, members: Member[]): string | undefined {
   const names = new Set(members.map((m) => m.name?.toLowerCase()).filter(Boolean) as string[]);
   // Prefer "for X" phrasing: "paid $80 for gas, split with everyone".
   const forMatch = text.match(/\bfor\s+(?:the\s+)?([^,.;!?]+?)(?=\s*(?:,|\.|;|!|\?|\bsplit\b|\bwith\b|\bbetween\b|$))/i);
-  const candidate = forMatch?.[1] ?? text;
-  const words = candidate
-    .replace(MONEY_WITH_SIGN, " ")
-    .replace(/\d+(\.\d+)?/g, " ")
-    .toLowerCase()
-    .split(/[^a-z']+/)
-    .filter((w) => w.length > 1 && !FILLER.has(w) && !names.has(w));
-  const reason = words.join(" ").trim();
+  const clean = (candidate: string) =>
+    candidate
+      .replace(MONEY_WITH_SIGN, " ")
+      .replace(/\d+(\.\d+)?/g, " ")
+      .toLowerCase()
+      .split(/[^a-z']+/)
+      .filter((w) => w.length > 1 && !FILLER.has(w) && !names.has(w) && !names.has(w.replace(/'?s$/, "")))
+      .join(" ")
+      .trim();
+  // "got lunch for jake": the words after "for" are just a name, so use the whole sentence.
+  const reason = (forMatch ? clean(forMatch[1]!) : "") || clean(text);
   return reason || undefined;
 }
 
 export function findParticipants(text: string, senderId: string, members: Member[]): "all" | string[] {
   const lower = text.toLowerCase();
-  const mentioned = members.filter((m) => m.name && new RegExp(`\\b${escapeRegex(m.name.toLowerCase())}\\b`).test(lower));
+  const mentioned = members.filter((m) => m.name && mentions(lower, m.name));
+  // "paid ayug's meal": the sender paid and only Ayug owes it.
+  const forSomeone = paidForSomeone(lower, senderId, members);
+  if (forSomeone) return forSomeone;
   // "Jake owes me $20 for gas": the sender paid and Jake owes all of it.
   if (/\bow(?:es|ed|e)\s+me\b/.test(lower)) {
     const debtors = mentioned.filter((m) => m.id !== senderId).map((m) => m.id);

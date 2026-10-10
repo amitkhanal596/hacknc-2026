@@ -42,6 +42,12 @@ describe("Gemini model fallback", () => {
     expect(calls).toEqual(["a", "c"]);
   });
 
+  it("treats Google's 504 DEADLINE_EXCEEDED as 'try the next model'", async () => {
+    const { g, calls } = fakeGemini("a,b", (m) => (m === "a" ? err(504, '{"error":{"code":504,"status":"DEADLINE_EXCEEDED"}}') : OK_IMAGE));
+    expect(await g.extractFromImage(image)).toMatchObject({ kind: "receipt" });
+    expect(calls).toEqual(["a", "b"]);
+  });
+
   it("doesn't try other models for errors they can't fix (bad request)", async () => {
     const { g, calls } = fakeGemini("a,b", () => err(400, "invalid argument"));
     await expect(g.extractFromImage(image)).rejects.toThrow("invalid argument");

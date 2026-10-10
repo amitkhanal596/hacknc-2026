@@ -83,6 +83,6 @@ Changing the schema: edit `src/db/schema.ts`, then `npx drizzle-kit generate --n
 
 ## Bot commands (1:1 DMs)
 
-`NEW <name>` (replies with an invite link to `/j/<code>`) · `SUMMARY` / "what are my expenses" / "my tab" (text summary + rich link card to `/t/<token>`) · `JOIN <code> [- I'm Name]` · `USE <group>` · `GROUPS` · `NAME <name>` · `BALANCE` · `SETTLE` · `PAY [name]` · `WHY [name]` · `NOPE <what's off>` (flag your share) · after a NOPE the payer can reply with a new amount in plain words ("$30 is fine", "make it 40", `FIX 40`), `OK` the amount suggested ("nope, should be $30"), or `REMOVE` · `PAYOUTS` · `HELP`
+`NEW <name>` (replies with an invite link to `/j/<code>`) · `SUMMARY` / "what are my expenses" / "my tab" (text summary + rich link card to `/t/<token>`) · `JOIN <code> [- I'm Name]` · `USE <group>` · `GROUPS` · `NAME <name>` · `BALANCE` · `SETTLE` · `PAY [name]` · `WHY [name]` · `NOPE <what's off>` (flag your share) · after a NOPE the payer can reply with a new amount in plain words ("$30 is fine", "make it 40", `FIX 40`), `OK` the amount suggested ("nope, should be $30"), or `REMOVE` · the payer can fix who an expense was for: "that was just for Jake", "only Jake and me", "split it with everyone" · `PAYOUTS` · `HELP`
 
 Anything else is treated as a possible expense: text ("paid $80 for gas, split with jake and sam"), a receipt photo, or a screenshot of a chat message.

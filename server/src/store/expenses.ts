@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNotNull, lte, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNotNull, lte, ne, sql } from "drizzle-orm";
 import type { Ctx } from "../context";
 import { timings } from "../context";
 import {
@@ -227,6 +227,27 @@ export function latestDisputedExpense(ctx: Ctx, payerId: string): Expense | unde
     .where(and(eq(expenses.payerId, payerId), eq(expenses.status, "active"), eq(expenseShares.status, "disputed")))
     .orderBy(desc(expenses.createdAt))
     .get()?.expense;
+}
+
+/** The payer's most recent active expense in a group. */
+export function latestExpenseBy(ctx: Ctx, payerId: string, groupId: string): Expense | undefined {
+  return ctx.db
+    .select()
+    .from(expenses)
+    .where(and(eq(expenses.payerId, payerId), eq(expenses.groupId, groupId), eq(expenses.status, "active")))
+    .orderBy(desc(expenses.createdAt), desc(sql`${expenses}.rowid`))
+    .get();
+}
+
+/** Has anything in the group changed (expense logged/edited/flagged, payment made) since this time? */
+export function groupChangedSince(ctx: Ctx, groupId: string, since: number): boolean {
+  const edited = ctx.db
+    .select({ id: auditLog.id })
+    .from(auditLog)
+    .innerJoin(expenses, eq(expenses.id, auditLog.expenseId))
+    .where(and(eq(expenses.groupId, groupId), gt(auditLog.at, since)))
+    .get();
+  return !!edited;
 }
 
 /** The payer's active expenses that have at least one disputed share, newest first. */

@@ -152,3 +152,26 @@ export function sameDescription(a: string, b: string): boolean {
   const shared = wb.filter((w) => wa.has(w)).length;
   return shared >= Math.min(wa.size, wb.length);
 }
+
+/**
+ * The payer correcting who an expense was for: "that was just for Ayug",
+ * "only Jake and Priya", "all on Sam", "it was Ayug's", "split it with everyone".
+ * Returns member ids (or "all"), or undefined if this isn't that kind of message.
+ */
+export function parseWhoFix(input: string, members: { id: string; name: string | null }[], senderId: string): string[] | "all" | undefined {
+  const text = input.trim().toLowerCase().replace(/[.!]+$/, "");
+  if (/\d/.test(text) || text.split(/\s+/).length > 10) return undefined;
+  const lead = String.raw`^(?:no,?\s*|nah,?\s*|oops,?\s*)?(?:(?:that|it|this)\s+(?:was|is|should be)\s+)?`;
+  if (new RegExp(`${lead}(?:for\\s+|split\\s+(?:it\\s+)?(?:with|between)\\s+)?(?:everyone|everybody|all of us|the whole group)$`).test(text)) return "all";
+  const m =
+    text.match(new RegExp(`${lead}(?:only|just)\\s+(?:for\\s+)?(.+)$`)) ??
+    text.match(new RegExp(`${lead}all\\s+on\\s+(.+)$`)) ??
+    text.match(/^(?:no,?\s*)?(?:that|it|this)\s+(?:was|is)\s+(?:for\s+)?(.+?)$/);
+  if (!m) return undefined;
+  const who = m[1]!;
+  const ids = members
+    .filter((p) => p.name && new RegExp(`\\b${p.name.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:'?s)?\\b`).test(who))
+    .map((p) => p.id);
+  if (/\b(me|myself|mine)\b/.test(who)) ids.push(senderId);
+  return ids.length ? [...new Set(ids)] : undefined;
+}

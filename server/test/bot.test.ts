@@ -321,6 +321,77 @@ describe("Asheville trip, end to end over DMs", () => {
     expect(await bot.say("jake", "PAY")).toBe("You don't owe anyone in Asheville Trip right now.");
   });
 
+  describe("paying for someone else (the Ayug's meal bug)", () => {
+    it("'paid jakes meal, cost 20 dollars' means Jake owes all of it, and the totals net correctly", async () => {
+      await bot.say("jake", "paid $30 for gas, split with amit");
+      const r = await bot.say("amit", "paid jakes meal, cost 20 dollars");
+      expect(r).toContain("Logged to Asheville Trip: Meal $20.00 · owed in full");
+      expect(bot.read("jake")).toContain("Your share: $20.00");
+      // Amit owes Jake $15 for gas, Jake owes Amit $20 for the meal → Jake pays Amit $5.
+      expect(groupDebts(bot.ctx, group().id)).toEqual([{ fromId: id("jake"), toId: id("amit"), cents: 500 }]);
+      expect(await bot.say("amit", "settle")).toContain("• Jake → Amit $5.00");
+    });
+
+    for (const t of ["covered Jake's dinner $20", "bought jake a coffee for $20", "got lunch for jake $20"]) {
+      it(`"${t}" is all on Jake`, async () => {
+        expect(await bot.say("amit", t)).toContain("$20.00 · owed in full");
+        expect(owed(groupDebts(bot.ctx, group().id), id("jake"), id("amit"))).toBe(2000);
+      });
+    }
+  });
+
+  describe("fixing who an expense was for", () => {
+    beforeEach(async () => {
+      await bot.say("amit", "paid $20 for meal"); // logged for everyone by mistake
+      bot.messenger.clearInbox();
+    });
+
+    it("'that was just for jake' moves it all onto Jake and tells the others they're off it", async () => {
+      const r = await bot.say("amit", "that was just for jake");
+      expect(r).toContain("Updated Meal: $20.00 · owed in full");
+      expect(bot.read("jake")).toContain("Amit updated Meal (now split just to you).");
+      expect(bot.read("priya")).toContain("Amit updated Meal: you're not part of it anymore. Running total: you're all even.");
+      expect(groupDebts(bot.ctx, group().id)).toEqual([{ fromId: id("jake"), toId: id("amit"), cents: 2000 }]);
+    });
+
+    for (const t of ["only jake", "just jake", "all on jake", "no, it was jake's"]) {
+      it(`understands "${t}"`, async () => {
+        expect(await bot.say("amit", t)).toContain("owed in full");
+      });
+    }
+
+    it("'only jake and me' splits between the two of them", async () => {
+      expect(await bot.say("amit", "only jake and me")).toContain("split 2 ways ($10.00 each)");
+    });
+
+    it("'split it with everyone' puts everyone back", async () => {
+      await bot.say("amit", "only jake");
+      expect(await bot.say("amit", "split it with everyone")).toContain("split 4 ways ($5.00 each)");
+      expect(bot.read("priya")).toContain("and added you");
+    });
+
+    it("doesn't confuse normal messages for a fix", async () => {
+      expect(await bot.say("amit", "only $5 for parking")).toContain("Parking $5.00");
+    });
+  });
+
+  it("a second SETTLE right after the first doesn't re-text everyone", async () => {
+    await bot.say("amit", "paid $40 for gas, everyone");
+    bot.advance(5_000);
+    await bot.say("amit", "settle");
+    bot.messenger.clearInbox();
+    bot.advance(60_000);
+    expect(await bot.say("priya", "settle")).toContain("I already sent everyone their totals 1 min ago:");
+    expect(bot.read("jake")).toBe("");
+    // Something new logged → a new SETTLE goes out again.
+    bot.advance(5_000);
+    await bot.say("priya", "paid $12 for snacks, everyone");
+    bot.advance(5_000);
+    bot.messenger.clearInbox();
+    expect(await bot.say("priya", "settle")).toContain("Settling up Asheville Trip");
+    expect(bot.read("jake")).toContain("Time to settle up");
+  });
+
   it("YES just shows your running total now (nothing to approve)", async () => {
     await bot.say("amit", "paid $40 for gas, everyone");
     expect(await bot.say("jake", "yes")).toBe("👍 Asheville Trip: you owe $10.00.");

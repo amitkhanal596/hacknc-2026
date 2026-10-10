@@ -16,6 +16,8 @@ import {
   applyShareAction,
   createExpense,
   disputedExpensesOf,
+  groupChangedSince,
+  latestExpenseBy,
   pendingSharesFor,
   receiptHistory,
   reviseExpense,
@@ -28,7 +30,7 @@ import {
 import { activeGroup, createGroup, findUserGroup, getGroup, getGroupByCode, groupsOf, isMember, markSettleRequested, membersOf } from "../store/groups";
 import { getReceiptImage, receiptFileName, saveReceiptImage } from "../store/receipts";
 import { ensureWallet, getOrCreateUser, getUser, nameOf, updateUser } from "../store/users";
-import { looksLikeName, parseCommand, parseFixReply, sameDescription, suggestedAmount, type Command } from "./commands";
+import { looksLikeName, parseCommand, parseFixReply, parseWhoFix, sameDescription, suggestedAmount, type Command } from "./commands";
 import { explain } from "./explain";
 import { buildSummary, summaryText } from "./summary";
 import { announceJoin, joinGroup } from "./join";
@@ -77,6 +79,19 @@ export async function handleDM(ctx: Ctx, msg: InboundDM): Promise<void> {
     if (disputed && fixCents) {
       clearPrompt(ctx, user.id, "fix");
       return await revise(ctx, user, disputed, { totalCents: fixCents }, reply);
+    }
+
+    // "that was just for Ayug": the payer fixing who their last (or flagged) expense was for.
+    if (msg.images.length === 0) {
+      const members = membersOf(ctx, group.id).map((m) => ({ id: m.id, name: m.displayName }));
+      const who = parseWhoFix(text, members, user.id);
+      const target = who ? disputed ?? latestExpenseBy(ctx, user.id, group.id) : undefined;
+      if (who && target) {
+        const ids = who === "all" ? members.map((m) => m.id) : who;
+        if (ids.length === 1 && ids[0] === user.id) return await reply("That would make it just you, so there's nothing to split. Who was it for?");
+        clearPrompt(ctx, user.id, "fix");
+        return await revise(ctx, user, target, { participantIds: ids }, reply);
+      }
     }
 
     // "What was the $20 for?" → "firewood"
@@ -248,9 +263,14 @@ function balanceText(ctx: Ctx, user: User, group: Group): string {
 async function settle(ctx: Ctx, user: User, group: Group, reply: Reply) {
   const debts = groupDebts(ctx, group.id);
   if (debts.length === 0) return reply(`Everyone's settled up in ${group.name} 🎉`);
+  const summary = debts.map((d) => `• ${nameOf(getUser(ctx, d.fromId))} → ${nameOf(getUser(ctx, d.toId))} ${$(d.cents)}`);
+  const last = group.settleRequestedAt;
+  if (last && ctx.now() - last < 10 * 60_000 && !groupChangedSince(ctx, group.id, last)) {
+    const mins = Math.max(1, Math.round((ctx.now() - last) / 60_000));
+    return reply(`I already sent everyone their totals ${mins} min ago:\n${summary.join("\n")}\nI'll keep reminding anyone who hasn't paid.`);
+  }
   // From now on Tab nudges anyone who still owes (and not before: no nagging mid-trip).
   markSettleRequested(ctx, group.id);
-  const summary = debts.map((d) => `• ${nameOf(getUser(ctx, d.fromId))} → ${nameOf(getUser(ctx, d.toId))} ${$(d.cents)}`);
   await reply(`Settling up ${group.name}. I texted everyone their total:\n${summary.join("\n")}\nI'll remind anyone who hasn't paid.`);
   for (const debtorId of new Set(debts.map((d) => d.fromId))) {
     const text = settleText(ctx, group, debtorId);
@@ -361,9 +381,17 @@ async function withdraw(ctx: Ctx, user: User, expense: Expense, reply: Reply) {
 }
 
 /** Payer changes the total and/or adds a receipt; everyone else re-approves. */
-async function revise(ctx: Ctx, user: User, expense: Expense, change: { totalCents?: number; receipt?: ReceiptInfo }, reply: Reply) {
+async function revise(
+  ctx: Ctx,
+  user: User,
+  expense: Expense,
+  change: { totalCents?: number; receipt?: ReceiptInfo; participantIds?: string[] },
+  reply: Reply,
+) {
   const totalCents = change.totalCents ?? expense.totalCents;
-  const participantIds = sharesOf(ctx, expense.id).filter((s) => s.status !== "rejected").map((s) => s.userId);
+  const before = sharesOf(ctx, expense.id).filter((s) => s.status !== "rejected").map((s) => s.userId);
+  const participantIds = change.participantIds ?? before;
+  const removed = before.filter((id) => !participantIds.includes(id) && id !== user.id);
   const receipt = change.receipt ?? (expense.receiptTotalCents || expense.receiptHash
     ? { totalCents: expense.receiptTotalCents ?? undefined, hash: expense.receiptHash ?? undefined }
     : undefined);
@@ -379,12 +407,23 @@ async function revise(ctx: Ctx, user: User, expense: Expense, change: { totalCen
 
   const shares = reviseExpense(ctx, expense.id, user.id, { totalCents, shares: splitEqual(totalCents, participantIds, expense.payerId), flags, receipt: change.receipt });
   const others = shares.filter((s) => s.userId !== user.id);
+  const whoNote = change.participantIds ? ` · ${splitSummary(totalCents, shares.map((s) => s.cents))}` : "";
   await reply(
-    `Updated ${expense.description}: ${$(totalCents)} (${flagBadges(flags, receipt?.totalCents)}). I let ${listOf(others.map((s) => nameOf(getUser(ctx, s.userId))))} know.`,
+    `Updated ${expense.description}: ${$(totalCents)}${whoNote} (${flagBadges(flags, receipt?.totalCents)}). I let ${listOf([...others.map((s) => s.userId), ...removed].map((id) => nameOf(getUser(ctx, id))))} know.`,
   );
+  for (const id of removed) {
+    await dm(ctx, id, `${nameOf(user)} updated ${expense.description}: you're not part of it anymore. Running total: ${runningTotal(ctx, expense.groupId, id)}.`);
+  }
   for (const d of shareDetails(ctx, others.map((s) => s.id))) {
     if (change.receipt) await sendReceiptPhoto(ctx, d.share.userId, expense);
-    const what = change.totalCents !== undefined && change.totalCents !== expense.totalCents ? ` to ${$(totalCents)}` : "";
+    const what =
+      change.participantIds && !before.includes(d.share.userId)
+        ? ` and added you`
+        : change.totalCents !== undefined && change.totalCents !== expense.totalCents
+          ? ` to ${$(totalCents)}`
+          : change.participantIds
+            ? ` (now split ${shares.length === 1 ? "just to you" : `${shares.length} ways`})`
+            : "";
     await sendExpenseNotice(ctx, d, `${nameOf(user)} updated ${expense.description}${what}${change.receipt ? " and added the receipt above" : ""}.`);
   }
 }
