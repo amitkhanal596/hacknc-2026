@@ -103,7 +103,7 @@ What's left:
 - [x] `npm run phone`: tunnel + Stripe Apple Pay domain + webhooks + server in one command
 - [x] TESTING.md: iPhone testing + in-person demo guide
 - [x] Home page / signup site (Frutiger Aero): get your Tab number, text/save-contact buttons, QR code on laptops (`/`, `/start`, `/contact.vcf`; `npm run preview:site`)
-- [ ] Deploy (Railway/Fly) with a fixed domain (sturdier than a quick tunnel)
+- [~] Deploy to Railway: repo prepared (`railway.json`, prod start, Node 22, `npm run setup:stripe`); follow [DEPLOY.md](./DEPLOY.md)
 - [ ] Seed script for a demo group
 - [ ] Demo script (Asheville scenario) rehearsed on 3 phones
 - [ ] Demo video

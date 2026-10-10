@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": "22.x"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
@@ -19,7 +19,8 @@
     "check:stripe": "tsx scripts/check-stripe.ts",
     "photon:register": "tsx scripts/photon-register.ts",
     "check:solana": "tsx scripts/check-solana.ts",
-    "preview:site": "tsx watch scripts/preview-site.ts"
+    "preview:site": "tsx watch scripts/preview-site.ts",
+    "setup:stripe": "tsx scripts/setup-stripe.ts"
   },
   "dependencies": {
     "@google/genai": "^2.28.0",
@@ -34,14 +35,14 @@
     "qrcode": "^1.5.4",
     "spectrum-ts": "^12.10.1",
     "stripe": "^23.0.0",
-    "zod": "^4.6.5"
+    "zod": "^4.6.5",
+    "tsx": "^4.23.15"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^26.6.5",
     "@types/qrcode": "^1.5.6",
     "drizzle-kit": "^0.31.11",
-    "tsx": "^4.23.15",
     "typescript": "^5.9.3",
     "vitest": "^4.1.11"
   },

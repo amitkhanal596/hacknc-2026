@@ -6,3 +6,5 @@ Text an AI bot to split shared costs. It reads receipts and messages (Gemini), g
 - [ARCHITECTURE.md](./ARCHITECTURE.md): how it works
 - [PROGRESS.md](./PROGRESS.md): what's done and what's next
 - [server/README.md](./server/README.md): run the server and the terminal simulator
+- [TESTING.md](./TESTING.md): keys, live tests, testing on your iPhone, the demo
+- [DEPLOY.md](./DEPLOY.md): deploy to Railway
