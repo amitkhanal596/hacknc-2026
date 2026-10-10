@@ -16,6 +16,12 @@ export interface InboundDM {
 
 export type DMHandler = (dm: InboundDM) => Promise<void>;
 
+export interface OutboundImage {
+  data: Buffer;
+  mimeType: string;
+  name: string;
+}
+
 /**
  * The bot only ever talks 1:1. Nothing outside src/messaging knows which
  * provider is behind this (Spectrum, the simulator, or the test inbox).
@@ -23,6 +29,7 @@ export type DMHandler = (dm: InboundDM) => Promise<void>;
 export interface Messenger {
   readonly name: string;
   send(to: string, text: string): Promise<void>;
+  sendImage(to: string, image: OutboundImage): Promise<void>;
   /** Starts delivering inbound DMs to the handler. Resolves once listening has started. */
   listen(handler: DMHandler): Promise<void>;
   stop?(): Promise<void>;

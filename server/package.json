@@ -17,7 +17,8 @@
     "phone": "tsx scripts/phone.ts",
     "check:photon": "tsx scripts/check-photon.ts",
     "check:stripe": "tsx scripts/check-stripe.ts",
-    "photon:register": "tsx scripts/photon-register.ts"
+    "photon:register": "tsx scripts/photon-register.ts",
+    "check:solana": "tsx scripts/check-solana.ts"
   },
   "dependencies": {
     "@google/genai": "^2.28.0",

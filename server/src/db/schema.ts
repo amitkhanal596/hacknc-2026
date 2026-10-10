@@ -1,4 +1,4 @@
-import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { blob, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 // Timestamps are unix milliseconds. Money is integer cents.
 
@@ -72,6 +72,14 @@ export const expenses = sqliteTable(
   },
   (t) => [index("expenses_group").on(t.groupId)],
 );
+
+/** The receipt photo (or chat screenshot) behind an expense, so it can be forwarded to the people asked to approve. */
+export const receiptImages = sqliteTable("receipt_images", {
+  expenseId: text("expense_id").primaryKey(),
+  mimeType: text("mime_type").notNull(),
+  data: blob("data", { mode: "buffer" }).notNull(),
+  createdAt: integer("created_at").notNull(),
+});
 
 export type ShareStatus = "pending" | "approved" | "disputed" | "rejected";
 export type ApprovedVia = "reply" | "extension" | "auto" | "payer";

@@ -20,7 +20,7 @@ async function trip() {
 }
 
 describe("web join page (the invite link)", () => {
-  it("joins the group, registers the phone with Photon, and has the bot text them first", async () => {
+  it("registers the phone with Photon and hands them a pre-filled JOIN text to their own Tab number", async () => {
     const { bot, code, app } = await trip();
     const registered: { phone: string; name?: string | null }[] = [];
     bot.ctx.registerMessagingUser = async (phone, name) => {
@@ -35,19 +35,28 @@ describe("web join page (the invite link)", () => {
     const res = await app.request(`/j/${code}`, form({ name: "jake", phone: "(919) 555-0002" }));
     expect(res.status).toBe(200);
     const body = await res.text();
-    expect(body).toContain("You're in Asheville Trip");
-    expect(body).toContain("+14155550123");
+    // The page hands them a pre-filled text to their own Tab number (shared lines need the person to text first).
+    expect(body).toContain("Text Tab to join");
+    expect(body).toContain(`sms:+14155550123&amp;body=JOIN%20${code}%20-%20I%27m%20jake`);
     expect(registered).toEqual([{ phone: PHONES.jake, name: "jake" }]);
+    expect(getUserByPhone(bot.ctx, PHONES.jake)!.photonLine).toBe("+14155550123");
+    expect(bot.read("jake")).toBe(""); // the bot doesn't text first
 
-    const jake = getUserByPhone(bot.ctx, PHONES.jake)!;
-    expect(jake.photonLine).toBe("+14155550123");
-    expect(membersOf(bot.ctx, getGroupByCode(bot.ctx, code)!.id).map((m) => m.displayName)).toEqual(["Amit", "jake"]);
-    expect(bot.read("jake")).toContain("You're in Asheville Trip with Amit!");
-    expect(bot.read("amit")).toContain("👋 jake joined Asheville Trip.");
+    // They send the pre-filled text; the normal JOIN flow runs.
+    await bot.say("jake", `JOIN ${code} - I'm jake`);
+    expect(membersOf(bot.ctx, getGroupByCode(bot.ctx, code)!.id).map((m) => m.displayName)).toEqual(["Amit", "Jake"]);
+    expect(bot.read("amit")).toContain("👋 Jake joined Asheville Trip.");
 
-    // Re-submitting doesn't re-register or duplicate.
+    // Re-submitting the form doesn't re-register.
     await app.request(`/j/${code}`, form({ name: "jake", phone: "9195550002" }));
     expect(registered).toHaveLength(1);
+  });
+
+  it("joins immediately when there's no Photon (local dev)", async () => {
+    const { bot, code, app } = await trip();
+    const body = await (await app.request(`/j/${code}`, form({ name: "Sam", phone: "9195550004" }))).text();
+    expect(body).toContain("You're in Asheville Trip");
+    expect(bot.read("sam")).toContain("You're in Asheville Trip with Amit!");
   });
 
   it("validates input and shows Photon errors on the page", async () => {

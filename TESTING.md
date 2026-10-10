@@ -13,12 +13,12 @@ All keys live in `server/.env`. Git ignores that file, so it never gets pushed. 
 | Key | Status | How it was checked |
 |---|---|---|
 | `PHOTON_PROJECT_ID` / `PHOTON_PROJECT_SECRET` | ✅ set, working | Connected to Spectrum cloud in ~0.5s. Read your project info: **Pro** plan, **shared** iMessage line, 0 registered users. |
-| `GEMINI_API_KEY` (`gemini-2.5-flash`) | ✅ set, working | Read a receipt **photo** (Shell, $80.00, line items, date) and parsed texts like "airbnb was 640, everyone but sam" correctly. |
+| `GEMINI_API_KEY` + `GEMINI_MODEL` chain | ✅ set, working | Read your real Cook-Out receipt and test receipts correctly. Rejects random pictures. **Free tier: 20 requests/day per model**, so the bot rotates through 4 models (see §6). |
 | `STRIPE_SECRET_KEY` / `STRIPE_PUBLISHABLE_KEY` | ✅ set, test mode | Created a real PaymentIntent through our code, paid it with Stripe's test Visa, webhook marked it paid. |
 | `STRIPE_WEBHOOK_SECRET` | ✅ generated with the Stripe CLI | Webhook arrived through `stripe listen` and passed signature verification. |
 | `WALLET_ENC_KEY`, `APP_SECRET` | ✅ generated (random) | Used to encrypt wallet keys and sign pay links / login tokens. |
-| `TREASURY_SECRET_KEY` | ✅ generated | Solana devnet wallet `5m7LeDG5jYUSnuobuTu1VimKWsZ3Uy7fdC4rYBLWwdQQ` |
-| `USDC_MINT` | ⏳ **waiting on you** (step 2a) | The wallet needs a little free devnet SOL first. Until then, USDC payments run in labeled "simulated" mode. |
+| `TREASURY_SECRET_KEY` | ✅ funded (~1 SOL) | Solana devnet wallet `5m7LeDG5jYUSnuobuTu1VimKWsZ3Uy7fdC4rYBLWwdQQ` |
+| `USDC_MINT` | ✅ `5usRFH3rUA2zew58aS76N7163wsthURfa4RMVA7jeFoW` | `npm run check:solana`: real on-chain $12.34 transfer in ~2.7s, balances verified. |
 | `PUBLIC_BASE_URL` | set automatically by `npm run phone` | Each run gets a fresh `https://….trycloudflare.com` URL. |
 
 Installed on your Mac: **Stripe CLI** 1.53.1, **cloudflared** (the HTTPS tunnel), and **Rust + devnet-pow** (tried for free devnet SOL; see 2a).
@@ -27,15 +27,19 @@ Installed on your Mac: **Stripe CLI** 1.53.1, **cloudflared** (the HTTPS tunnel)
 
 | Test | Result |
 |---|---|
-| `npm test`: ledger math, the full Asheville scenario over DMs, extension API, jobs, Apple Pay flow (fake Stripe), join page, Photon registration request | ✅ **44 / 44** |
+| `npm test`: ledger math, the full Asheville scenario over DMs, extension API, jobs, Apple Pay flow (fake Stripe), join page, Photon registration, receipt-photo forwarding, image rejection, Gemini model fallback | ✅ **51 / 51** |
 | Simulator with **real Gemini**: receipt photo → expense, "dinner was 96, split with jake" → 2-way split, "pay me $20" → asks why, approvals, WHY, settle-up with Apple Pay links | ✅ |
 | `npm run check:stripe`: real PaymentIntent → test card → webhook → payment recorded | ✅ |
 | `npm run phone`: public HTTPS tunnel, Stripe registered the domain with **Apple Pay: active**, server reachable from the internet | ✅ |
 | Photon: credentials connect and the bot listens | ✅ |
-| Photon: a real text round trip from your iPhone | ⏳ needs your phone (step 2c) |
+| Photon: registered +1 919-813-8735 → assigned line **+1 415-605-5838** | ✅ |
+| Photon: you texting the bot | ✅ "hi" from +1 919-813-8735 arrived |
+| Photon: bot texting you (after you texted it once) | ✅ text **and photo** delivered |
+| Photon: bot texting someone who never texted it | ❌ refused ("Target not allowed"), so the invite page has people text first |
+| Your own end-to-end run: Cook-Out receipt photo → expense, approvals, real devnet `PAY` | ✅ |
 | Apple Pay sheet on a real iPhone | ⏳ needs your phone (section 3) |
-| Connect payouts (person owed connects a bank) | ⏳ needs a Stripe Dashboard step (2b) |
-| Real Solana devnet transfer | ⏳ needs devnet SOL (2a) |
+| Connect payouts: payout account + onboarding link created live | ✅ (finishing onboarding in the browser is the last manual step) |
+| Real Solana devnet transfer (`npm run check:solana`) | ✅ |
 
 ---
 
@@ -82,7 +86,10 @@ To check the round trip right away (sends you one hello, then prints what you te
 ```bash
 npm run check:photon -- +1YOURNUMBER
 ```
-If texts don't arrive, Apple may be using a different handle for your iMessage (an email instead of your number). Open **https://debug.photon.codes** on your iPhone, which tells you the exact handle, and register that instead.
+**Troubleshooting "Target not allowed for this project"** (what happened on the first live test, even though the number is registered):
+1. **Text the bot first.** From your iPhone, send any message to your assigned line (for +1 919-813-8735 that's **+1 415-605-5838**). Then run `CHECK_MINUTES=10 npm run check:photon`. If your text shows up there, inbound works and the bot can reply in that conversation.
+2. **Check which address your iPhone's iMessage really uses.** Open **https://debug.photon.codes** on the iPhone and it replies with the exact handle. If it's an email, either register that email in the Photon dashboard (Users), or on the iPhone go to Settings → Messages → Send & Receive and set "Start new conversations from" to your phone number.
+3. If both look right and sending still fails, it's on Photon's side (shared-line routing). Ask the Photon sponsors at HackNC, and mention the project is on the Pro plan with a shared line.
 
 ---
 
@@ -159,7 +166,7 @@ Three phones (you plus two teammates), with the laptop showing the `npm run phon
 | Quick-tunnel URL changes each time `npm run phone` restarts | Start it once before presenting and don't restart (old invite and pay links stop working on restart). For a sturdier demo, deploy to Railway/Fly with a fixed domain and register it in Stripe → Settings → Payment method domains. |
 | A phone isn't registered with Photon | Have them open the invite link (or run `npm run photon:register -- +1…`). Shared-line plans cap how many users a project can have (a full project returns "project is full"), and third-party write-ups mention daily new-conversation limits, so register the demo phones the day before. |
 | Someone has an Android phone | iMessage only, so use iPhones for the demo. |
-| Gemini is slow or down | The bot falls back to its text parser automatically. Receipts photos need Gemini, so have a text expense ready ("paid $80 for gas, everyone"). |
+| Gemini is slow, busy, or out of quota | The bot rotates through 4 models and times out stuck calls. If all fail, texts still work (built-in parser) and photos get "text me the amount". Turn on billing before the demo (§6). |
 | Something breaks live | Switch the laptop to `npm run sim -- --persist` and run the same script from the terminal. |
 
 ### What isn't demo-able yet
@@ -169,17 +176,51 @@ Three phones (you plus two teammates), with the laptop showing the `npm run phon
 
 ---
 
-## 5. Command reference (run inside `server/`)
+## 5. How receipt photos are handled
+
+**Is the photo actually read?** Yes. Every photo goes to Gemini, which labels it a *receipt*, a *chat screenshot*, or *something else*, and reads the merchant, date, line items, and total.
+
+| You send | What the bot does |
+|---|---|
+| A clear receipt | Logs it with the total from the receipt. "🧾 receipt matched" means the receipt was read *and* matches any amount you typed. It does **not** mean approved: everyone still approves their own share. |
+| A receipt, but you typed a different amount | Logs it with **⚠️ receipt says $X** so others see the mismatch before approving |
+| The same receipt twice | Logs it with **⚠️ looks like a duplicate** |
+| A blurry receipt (Gemini under 50% sure of the total) | Logs nothing. Asks for a sharper photo or the amount. |
+| A random picture (landscape, selfie, meme) | Logs nothing: "That doesn't look like a receipt" |
+| A screenshot of a chat ("I paid $640 for the airbnb") | Logs it from the text, forwards the screenshot as evidence, but marks it **⚠️ no receipt** (never auto-approves) |
+| Any photo while Gemini is down or out of quota | Logs nothing: "I can't read photos right now… text me the amount instead" |
+
+Tested live: a drawn landscape came back "other" (rejected). A meme with "$50" in it was either rejected or read as a chat claim with no reason, so the bot asks "What was the $50 for?". In no case does a random picture become an approved debt.
+
+**The photo is forwarded.** When an expense has a receipt or screenshot, each person asked to approve gets **the photo first, then the approval text**, so the evidence is right there. When a payer adds a receipt to settle a dispute, everyone gets the new photo with "…and added the receipt above". Photos are stored in the database (`receipt_images`) next to the expense.
+
+## 6. Gemini limits (important for the demo)
+
+Your key is on Google's **free tier: 20 requests per day per model**. During testing, `gemini-2.5-flash` ran out, and newer models sometimes return **503 "high demand"**. So the bot tries models in order (`GEMINI_MODEL` in `.env`):
+
+`gemini-3.8-flash → gemini-3.5-flash → gemini-2.5-flash → gemini-2.5-flash-lite`
+
+- Each model has its **own** daily quota, so that's roughly 80 photos/texts a day.
+- A model that's busy is skipped for 1 minute. One that's out of quota is skipped for 15 minutes.
+- Each call times out after 12 seconds, so a stuck model can't leave someone's text unanswered.
+
+Text messages fall back to the built-in parser if every model fails. Photos can't, so the bot asks for the amount instead.
+
+**Before the demo, strongly consider turning on billing** for the key (Google AI Studio → your project → set up billing). Paid tier limits are far higher, and at Flash prices a whole hackathon of receipts costs well under a dollar. Otherwise, avoid burning quota while rehearsing: use `npm run sim` with `/receipt 80 Shell` (no Gemini call) for practice runs.
+
+## 7. Command reference (run inside `server/`)
 
 | Command | What it does |
 |---|---|
-| `npm test` | All 44 tests (no network) |
+| `npm test` | All 51 tests (no network) |
 | `npm run sim` | Text the bot from your terminal as different people |
 | `npm run phone` | Tunnel + Stripe domain + webhooks + server, for iPhone testing and demos |
 | `npm run dev` | Server only (Photon + API + jobs), restarts on file changes |
 | `npm run photon:register -- +1… Name` | Register a phone with Photon and print the number it should text |
 | `npm run check:photon -- +1…` | Register, text yourself a hello, print replies for 2 minutes |
-| `npm run check:stripe` | Live Stripe test: PaymentIntent → test card → webhook (needs `stripe listen` on port 3997) |
+| `npm run check:stripe` | Live Stripe test: PaymentIntent → test card → webhook → Connect account (needs `stripe listen` on port 3997) |
+| `npm run check:solana` | Live devnet test: two wallets, fund, transfer $12.34, verify balances |
+| `CHECK_MINUTES=10 npm run check:photon` | Print every message the bot receives for 10 minutes |
 | `npm run setup:devnet` | Create the Solana devnet treasury + tUSDC token and write them to `.env` |
 
 ### Security reminders

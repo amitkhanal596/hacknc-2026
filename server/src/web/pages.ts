@@ -132,19 +132,30 @@ export function joinPage(d: { code: string; groupName: string; members: string[]
   );
 }
 
-export function joinedPage(d: { groupName: string; line?: string; code: string }) {
-  const sms = d.line ? `sms:${d.line}&body=${encodeURIComponent("hi")}` : undefined;
-  return layout(
-    "You're in",
-    html`<div class="card">
+export function joinedPage(d: { groupName: string; code: string; line?: string; joinText?: string }) {
+  if (!d.line || !d.joinText) {
+    return layout(
+      "You're in",
+      html`<div class="card">
         <p class="amount" style="font-size:30px">✅ You're in ${d.groupName}</p>
-        <p class="to">Tab just texted you${d.line ? html` from <b>${d.line}</b>` : ""}. Check Messages.</p>
+        <p class="to">Tab will text you. Check Messages.</p>
+      </div>`,
+    );
+  }
+  const sms = `sms:${d.line}&body=${encodeURIComponent(d.joinText).replace(/'/g, "%27")}`;
+  return layout(
+    "One last step",
+    html`<div class="card">
+        <h1>One last step</h1>
+        <p class="amount" style="font-size:28px">Text Tab to join ${d.groupName}</p>
+        <p class="to">Tap the button, then hit send. Messages opens with everything filled in.</p>
       </div>
-      ${sms
-        ? html`<div class="card">
-            <p class="muted" style="margin-top:0">Save that number as a contact named "Tab" so it's easy to find. Didn't get a text?</p>
-            <a href="${sms}"><button class="secondary" type="button">Open a chat with Tab</button></a>
-          </div>`
-        : ""}`,
+      <div class="card">
+        <a href="${sms}" style="text-decoration:none">
+          <button class="secondary" type="button" style="background:var(--accent);color:#fff;border:0;font-size:18px;padding:16px">Text Tab to join</button>
+        </a>
+        <p class="muted" style="margin-bottom:0">Your Tab number is <b>${d.line}</b>. Save it as a contact named "Tab".<br />
+        Or text it yourself: <b>${d.joinText}</b></p>
+      </div>`,
   );
 }

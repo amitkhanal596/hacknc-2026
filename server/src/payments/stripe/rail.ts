@@ -47,8 +47,13 @@ export class StripeRail {
    * platform is merchant of record and owns fees/losses, and the only capability
    * requested is receiving transfers (no card_payments, so onboarding is shorter).
    */
-  async createRecipientAccount(userId: string): Promise<string> {
+  async createRecipientAccount(userId: string, email?: string): Promise<string> {
+    // Stripe requires a contact email on recipient accounts. We only know phone
+    // numbers, so test mode uses a placeholder; live mode needs a real one.
+    const testMode = /^(sk|rk)_test_/.test(this.opts.secretKey);
+    if (!email && !testMode) throw new Error("A contact email is required to create live payout accounts.");
     const account = await this.stripe.v2.core.accounts.create({
+      contact_email: email ?? `tab-user-${userId.replace(/[^a-z0-9]/gi, "")}@example.com`,
       dashboard: "express",
       identity: { country: "us", entity_type: "individual" },
       defaults: { responsibilities: { fees_collector: "application", losses_collector: "application" } },

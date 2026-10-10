@@ -19,7 +19,7 @@ export function createExtractor(config: Config): Extractor {
       try {
         return await gemini.extractFromText(input);
       } catch (err) {
-        console.warn("[gemini] text extraction failed, using fallback:", (err as Error).message);
+        console.warn("[gemini] text extraction failed on every model, using the regex parser:", (err as Error).message);
         return fallback.extractFromText(input);
       }
     },
@@ -27,8 +27,9 @@ export function createExtractor(config: Config): Extractor {
       try {
         return await gemini.extractFromImage(input);
       } catch (err) {
-        console.warn("[gemini] image extraction failed, using fallback:", (err as Error).message);
-        return fallback.extractFromImage(input);
+        console.warn("[gemini] image extraction failed on every model:", (err as Error).message);
+        const r = await fallback.extractFromImage(input);
+        return r.kind === "other" ? { ...r, unavailable: true } : r;
       }
     },
   };

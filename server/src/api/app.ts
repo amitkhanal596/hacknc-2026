@@ -259,8 +259,14 @@ export function createApp(ctx: Ctx) {
       console.error("[join] messaging registration failed:", (err as Error).message);
       return again(err instanceof PhotonRegistrationError ? err.message : "Couldn't set up texting right now. Try again in a minute.");
     }
-    await joinGroup(ctx, getUser(ctx, user.id)!, group, user.displayName ? undefined : name);
-    return c.html(joinedPage({ groupName: group.name, line, code: group.joinCode }));
+    if (!line) {
+      // No Photon (local dev): join right away; the bot's messages show up in the console.
+      await joinGroup(ctx, getUser(ctx, user.id)!, group);
+      return c.html(joinedPage({ groupName: group.name, code: group.joinCode }));
+    }
+    // Photon shared lines only let the bot reply once the person has texted it,
+    // so they finish joining by sending a pre-filled JOIN text to their own Tab number.
+    return c.html(joinedPage({ groupName: group.name, code: group.joinCode, line, joinText: `JOIN ${group.joinCode} - I'm ${name}` }));
   });
 
   // ---------------------------------------------------------------- pay page (signed link, no login)

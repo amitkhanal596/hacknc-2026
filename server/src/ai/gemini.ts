@@ -67,20 +67,64 @@ function memberList(members: Member[]) {
 const nonZero = (n: number | undefined) => (n && n > 0 ? n : undefined);
 const nonEmpty = (s: string | undefined) => (s && s.trim() ? s.trim() : undefined);
 
+/** Per-call timeout. A hung model must not leave someone's text unanswered. */
+const CALL_TIMEOUT_MS = 12_000;
+/** How long to skip a model after it fails: quota errors reset slowly, "busy" ones quickly. */
+const COOLDOWN_MS = { quota: 15 * 60_000, busy: 60_000, timeout: 60_000 } as const;
+
+type GenerateParams = Parameters<GoogleGenAI["models"]["generateContent"]>[0];
+
+/**
+ * Tries each configured model in order. Free-tier keys have small per-model
+ * daily quotas and models can return 503 "high demand", so a model that fails
+ * is skipped for a while and the next one is tried. Throws only if every model fails.
+ */
 export class GeminiExtractor implements Extractor {
   readonly name = "gemini";
   private ai: GoogleGenAI;
+  private models: string[];
+  private coolingUntil = new Map<string, number>();
 
-  constructor(apiKey: string, private model: string) {
-    this.ai = new GoogleGenAI({ apiKey });
+  constructor(apiKey: string, models: string | string[], private now: () => number = Date.now) {
+    this.ai = new GoogleGenAI({ apiKey, httpOptions: { timeout: CALL_TIMEOUT_MS } });
+    this.models = (Array.isArray(models) ? models : models.split(",")).map((m) => m.trim()).filter(Boolean);
+    if (this.models.length === 0) throw new Error("No Gemini model configured");
+  }
+
+  private async generate(params: Omit<GenerateParams, "model">) {
+    const available = this.models.filter((m) => (this.coolingUntil.get(m) ?? 0) <= this.now());
+    const order = available.length ? available : this.models; // everything cooling: try anyway
+    let lastError: unknown;
+    for (const model of order) {
+      try {
+        return await this.ai.models.generateContent({ ...params, model });
+      } catch (err) {
+        lastError = err;
+        const e = err as { status?: number; message?: string; name?: string };
+        const msg = e.message ?? "";
+        const kind =
+          e.status === 429 || /quota|RESOURCE_EXHAUSTED/i.test(msg)
+            ? "quota"
+            : e.status === 503 || e.status === 500 || /UNAVAILABLE|high demand|overloaded/i.test(msg)
+              ? "busy"
+              : /timed? ?out|abort/i.test(`${e.name} ${msg}`)
+                ? "timeout"
+                : e.status === 404
+                  ? "quota" // model not available to this key: park it
+                  : undefined;
+        if (!kind) throw err; // bad request etc.: another model won't help
+        this.coolingUntil.set(model, this.now() + COOLDOWN_MS[kind]);
+        console.warn(`[gemini] ${model} ${kind} (${e.status ?? "?"}), trying next model`);
+      }
+    }
+    throw lastError;
   }
 
   async extractFromText(input: TextInput): Promise<TextExtraction> {
     const prompt = `Group members:\n${memberList(input.members)}\n\nSender id: ${input.senderId}\n\nSender's recent messages (oldest first):\n${
       input.recent.map((r) => `> ${r}`).join("\n") || "(none)"
     }\n\nNew message:\n"""${input.text}"""`;
-    const res = await this.ai.models.generateContent({
-      model: this.model,
+    const res = await this.generate({
       contents: prompt,
       config: { systemInstruction: SYSTEM, responseMimeType: "application/json", responseJsonSchema: textSchema, temperature: 0 },
     });
@@ -97,8 +141,7 @@ export class GeminiExtractor implements Extractor {
   }
 
   async extractFromImage(input: ImageInput): Promise<ImageExtraction> {
-    const res = await this.ai.models.generateContent({
-      model: this.model,
+    const res = await this.generate({
       contents: [
         {
           role: "user",

@@ -9,7 +9,7 @@ import { formatCents as $ } from "../ledger/money";
 import { splitEqual } from "../ledger/splits";
 import { mismatchTolerance, validateExpense, type ReceiptInfo } from "../ledger/validate";
 import type { InboundDM } from "../messaging/types";
-import { dm } from "../notify";
+import { dm, dmImage } from "../notify";
 import { notifyCreditor, paySolana, payoutsOnboardingLink, PayoutsUnavailableError } from "../payments/service";
 import { clearPrompt, getPrompt, logDM, recentInbound, setPrompt } from "../store/dms";
 import {
@@ -27,6 +27,7 @@ import {
   type ShareDetail,
 } from "../store/expenses";
 import { activeGroup, addMember, createGroup, findUserGroup, getGroup, getGroupByCode, groupsOf, isMember, membersOf } from "../store/groups";
+import { getReceiptImage, receiptFileName, saveReceiptImage } from "../store/receipts";
 import { ensureWallet, getOrCreateUser, getUser, nameOf, updateUser } from "../store/users";
 import { looksLikeName, parseCommand, type Command } from "./commands";
 import { explain } from "./explain";
@@ -374,7 +375,10 @@ async function revise(ctx: Ctx, user: User, expense: Expense, change: { totalCen
   await reply(
     `Updated ${expense.description}: ${$(totalCents)} (${flagBadges(flags, receipt?.totalCents)}). I asked ${listOf(others.map((id) => nameOf(getUser(ctx, id))))} to approve again.`,
   );
-  for (const id of others) await sendApprovalRequests(ctx, id, `${nameOf(user)} updated ${expense.description}.`);
+  for (const id of others) {
+    if (change.receipt) await sendReceiptPhoto(ctx, id, expense);
+    await sendApprovalRequests(ctx, id, `${nameOf(user)} updated ${expense.description}${change.receipt ? " and added the receipt above" : ""}.`);
+  }
 }
 
 // ------------------------------------------------------------------ expense capture
@@ -385,7 +389,18 @@ async function readImage(ctx: Ctx, group: Group, msg: InboundDM, caption: string
   const hash = createHash("sha256").update(data).digest("hex");
   const members = membersOf(ctx, group.id).map((m) => ({ id: m.id, name: m.displayName }));
   const extraction = await ctx.extractor.extractFromImage({ data, mimeType: image.mimeType, members, caption: caption || undefined });
-  return { extraction, hash };
+  return { extraction, hash, photo: { data, mimeType: image.mimeType } };
+}
+
+/** Below this, Gemini isn't sure it read the total right, so we ask instead of guessing. */
+const MIN_RECEIPT_CONFIDENCE = 0.5;
+
+const AI_UNAVAILABLE = `I can't read photos right now (my image reader is busy). Text me the amount instead, like "paid $80 for gas", and send the photo again later.`;
+
+/** Sends the receipt photo for an expense, if we kept one. */
+async function sendReceiptPhoto(ctx: Ctx, userId: string, expense: Expense) {
+  const img = getReceiptImage(ctx, expense.id);
+  if (img) await dmImage(ctx, userId, { data: img.data, mimeType: img.mimeType, name: receiptFileName(expense.description, img.mimeType) });
 }
 
 function receiptFrom(extraction: ImageExtraction, hash: string): ReceiptInfo {
@@ -394,11 +409,13 @@ function receiptFrom(extraction: ImageExtraction, hash: string): ReceiptInfo {
 
 async function attachReceipt(ctx: Ctx, user: User, expense: Expense, msg: InboundDM, reply: Reply) {
   const group = getGroup(ctx, expense.groupId)!;
-  const { extraction, hash } = await readImage(ctx, group, msg, msg.text ?? "");
-  if (extraction.kind !== "receipt" || !extraction.totalCents) {
+  const { extraction, hash, photo } = await readImage(ctx, group, msg, msg.text ?? "");
+  if (extraction.unavailable) return reply(AI_UNAVAILABLE);
+  if (extraction.kind !== "receipt" || !extraction.totalCents || extraction.confidence < MIN_RECEIPT_CONFIDENCE) {
     return reply("I couldn't read a total on that. Try a clearer photo of the receipt, or reply FIX $amount.");
   }
   clearPrompt(ctx, user.id, "fix");
+  saveReceiptImage(ctx, expense.id, photo.mimeType, photo.data);
   return revise(ctx, user, expense, { receipt: receiptFrom(extraction, hash) }, reply);
 }
 
@@ -408,16 +425,23 @@ async function captureExpense(ctx: Ctx, user: User, group: Group, msg: InboundDM
   const text = msg.text?.trim() ?? "";
   const members = membersOf(ctx, group.id).map((m) => ({ id: m.id, name: m.displayName }));
   let receipt: ReceiptInfo | undefined;
+  let photo: { data: Buffer; mimeType: string } | undefined;
   let describedText = text;
 
   if (msg.images.length > 0) {
-    const { extraction, hash } = await readImage(ctx, group, msg, text);
-    if (extraction.kind === "receipt" && extraction.totalCents) {
+    const read = await readImage(ctx, group, msg, text);
+    const { extraction, hash } = read;
+    if (extraction.unavailable) return reply(AI_UNAVAILABLE);
+    if (extraction.kind === "receipt" && extraction.totalCents && extraction.confidence >= MIN_RECEIPT_CONFIDENCE) {
       receipt = receiptFrom(extraction, hash);
+      photo = read.photo;
     } else if (extraction.kind === "chat_screenshot" && extraction.claimedText) {
       describedText = [extraction.claimedText, text].filter(Boolean).join(". ");
+      photo = read.photo; // forwarded as evidence, but it's not a receipt (still flagged "no receipt")
+    } else if (extraction.kind === "receipt") {
+      return reply(`That looks like a receipt, but I couldn't read the total clearly. Try a sharper photo, or text me the amount, like "paid $80 for gas".`);
     } else {
-      return reply(`I couldn't read that image. Text me the amount and what it was for, like "paid $80 for gas".`);
+      return reply(`That doesn't look like a receipt, so I didn't log anything. Send a photo of the receipt, or text me the amount and what it was for, like "paid $80 for gas".`);
     }
   }
 
@@ -436,6 +460,7 @@ async function captureExpense(ctx: Ctx, user: User, group: Group, msg: InboundDM
     totalCents: extraction?.amountCents,
     participants: extraction?.participants ?? "all",
     receipt,
+    photo,
     sourceText: describedText || null,
     dmId,
     reply,
@@ -451,6 +476,7 @@ async function recordExpense(
     totalCents?: number;
     participants: "all" | string[];
     receipt?: ReceiptInfo;
+    photo?: { data: Buffer; mimeType: string };
     sourceText: string | null;
     dmId: string;
     reply: Reply;
@@ -502,7 +528,12 @@ async function recordExpense(
     `Logged to ${group.name}: ${expense.description} ${$(expense.totalCents)} · ${splitSummary(expense.totalCents, shares.map((s) => s.cents))} · ` +
       `${flagBadges(expense.flags, expense.receiptTotalCents)}. I've asked ${listOf(others.map((s) => nameOf(getUser(ctx, s.userId))))} to approve.`,
   );
-  for (const s of others) await sendApprovalRequests(ctx, s.userId);
+  if (input.photo) saveReceiptImage(ctx, expense.id, input.photo.mimeType, input.photo.data);
+  for (const s of others) {
+    // The photo goes first so the approval request right below it has the evidence attached.
+    if (input.photo) await sendReceiptPhoto(ctx, s.userId, expense);
+    await sendApprovalRequests(ctx, s.userId);
+  }
 }
 
 function capitalize(s: string) {

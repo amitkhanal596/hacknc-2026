@@ -80,6 +80,55 @@ describe("Asheville trip, end to end over DMs", () => {
     expect(owed(groupDebts(bot.ctx, group.id), priya.id, amit.id)).toBe(0);
   });
 
+  it("forwards the receipt photo to each person right before their approval request", async () => {
+    await bot.say("amit", "gas, everyone", [fakeReceipt({ totalCents: 8000, merchant: "Shell" })]);
+    for (const who of ["jake", "priya", "sam"] as const) {
+      const msgs = bot.messenger.inbox(PHONES[who]);
+      expect(msgs[0]).toBe("[photo: gas-receipt.jpg]");
+      expect(msgs[1]).toContain("Amit logged Gas $80.00 (🧾 receipt matched)");
+    }
+    const photo = bot.messenger.outbox.find((m) => m.to === PHONES.jake && m.image)!.image!;
+    expect(JSON.parse(photo.data.toString())).toMatchObject({ totalCents: 8000 }); // the exact bytes that were sent in
+    expect(bot.messenger.inbox(PHONES.amit).some((m) => m.startsWith("[photo:"))).toBe(false); // not echoed to the payer
+  });
+
+  it("doesn't log random pictures, low-confidence receipts, or anything when the AI is down", async () => {
+    const real = bot.ctx.extractor;
+    const image = fakeReceipt({});
+    const withImage = (r: object) => ({
+      name: "test",
+      extractFromText: (input: Parameters<typeof real.extractFromText>[0]) => real.extractFromText(input),
+      extractFromImage: async () => ({ confidence: 0, ...r }) as never,
+    });
+
+    bot.ctx.extractor = withImage({ kind: "other" });
+    expect(await bot.say("amit", "gas, everyone", [image])).toContain("doesn't look like a receipt, so I didn't log anything");
+
+    bot.ctx.extractor = withImage({ kind: "receipt", totalCents: 8000, confidence: 0.3 });
+    expect(await bot.say("amit", "gas, everyone", [image])).toContain("couldn't read the total clearly");
+
+    bot.ctx.extractor = withImage({ kind: "other", unavailable: true });
+    expect(await bot.say("amit", "gas, everyone", [image])).toContain("I can't read photos right now");
+
+    bot.ctx.extractor = real;
+    const group = getGroupByCode(bot.ctx, code)!;
+    expect(groupDebts(bot.ctx, group.id)).toEqual([]);
+    expect(bot.read("jake")).toBe(""); // nobody was asked to approve anything
+  });
+
+  it("forwards a chat screenshot as evidence but still marks it as no receipt", async () => {
+    const real = bot.ctx.extractor;
+    bot.ctx.extractor = {
+      name: "test",
+      extractFromText: (input) => real.extractFromText(input),
+      extractFromImage: async () => ({ kind: "chat_screenshot", claimedText: "I paid $640 for the airbnb", confidence: 0.95 }),
+    };
+    const logged = await bot.say("amit", "split with everyone", [fakeReceipt({}, "screenshot.png")]);
+    expect(logged).toContain("Airbnb $640.00");
+    expect(logged).toContain("⚠️ no receipt");
+    expect(bot.messenger.inbox(PHONES.jake)[0]).toBe("[photo: airbnb-receipt.jpg]");
+  });
+
   it("refuses 'pay me $20' until it has a reason, then logs it with a no-receipt badge", async () => {
     expect(await bot.say("sam", "pay me $30")).toBe("What was the $30.00 for? A receipt photo helps.");
     const logged = await bot.say("sam", "firewood");
@@ -90,10 +139,9 @@ describe("Asheville trip, end to end over DMs", () => {
   it("asks for a reason even when the extractor (like Gemini) says 'pay me $20' isn't an expense", async () => {
     const real = bot.ctx.extractor;
     bot.ctx.extractor = {
-      ...real,
       name: "gemini-like",
       extractFromText: async () => ({ isExpense: false, hasReason: false, amountCents: 2000, participants: "all" }),
-      extractFromImage: real.extractFromImage,
+      extractFromImage: (input) => real.extractFromImage(input),
     };
     expect(await bot.say("sam", "pay me $20")).toBe("What was the $20.00 for? A receipt photo helps.");
     bot.ctx.extractor = real;
@@ -126,7 +174,9 @@ describe("Asheville trip, end to end over DMs", () => {
 
     const updated = await bot.say("sam", "", [fakeReceipt({ totalCents: 3000, merchant: "Ingles", date: "2026-10-12" })]);
     expect(updated).toContain("Updated Firewood: $30.00 (🧾 receipt matched)");
-    expect(bot.read("amit")).toContain("Sam updated Firewood.");
+    const toAmit = bot.read("amit");
+    expect(toAmit).toContain("[photo: firewood-receipt.jpg]"); // the new receipt is forwarded
+    expect(toAmit).toContain("Sam updated Firewood and added the receipt above.");
     expect(await bot.say("amit", "yes")).toContain("✅ Approved: Firewood");
   });
 

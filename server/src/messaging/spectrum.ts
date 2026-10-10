@@ -1,6 +1,6 @@
-import { Spectrum, type Message, type Space } from "spectrum-ts";
+import { attachment, Spectrum, type Message, type Space } from "spectrum-ts";
 import { imessage } from "spectrum-ts/providers/imessage";
-import { normalizeHandle, type DMHandler, type InboundImage, type Messenger } from "./types";
+import { normalizeHandle, type DMHandler, type InboundImage, type Messenger, type OutboundImage } from "./types";
 
 type Content = Message["content"];
 
@@ -28,7 +28,7 @@ export class SpectrumMessenger implements Messenger {
     return this.app;
   }
 
-  async send(to: string, text: string): Promise<void> {
+  private async spaceFor(to: string): Promise<Space> {
     const handle = normalizeHandle(to);
     let space = this.spaces.get(handle);
     if (!space) {
@@ -36,7 +36,15 @@ export class SpectrumMessenger implements Messenger {
       space = await imessage(app).space.create(handle);
       this.spaces.set(handle, space);
     }
-    await space.send(text);
+    return space;
+  }
+
+  async send(to: string, text: string): Promise<void> {
+    await (await this.spaceFor(to)).send(text);
+  }
+
+  async sendImage(to: string, image: OutboundImage): Promise<void> {
+    await (await this.spaceFor(to)).send(attachment(image.data, { mimeType: image.mimeType, name: image.name }));
   }
 
   async listen(handler: DMHandler): Promise<void> {

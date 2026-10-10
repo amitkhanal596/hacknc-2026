@@ -40,6 +40,8 @@ export interface ImageExtraction {
   /** For chat screenshots: the message text that describes the expense. */
   claimedText?: string;
   confidence: number; // 0..1
+  /** True when no AI was available to look at the image (not the same as "not a receipt"). */
+  unavailable?: boolean;
 }
 
 export interface Extractor {

@@ -33,8 +33,14 @@ if (to) {
   // Shared-line plans only text registered numbers, so register first (idempotent).
   const { assignedPhoneNumber } = await registerPhotonUser(config.photon, to);
   console.log(`✅ ${normalizeHandle(to)} is registered; its Tab line is ${assignedPhoneNumber}`);
-  await messenger.send(normalizeHandle(to), "👋 Tab test: if you can read this, outbound iMessage works. Reply with anything (try a photo too).");
-  console.log(`✅ Sent a test message to ${normalizeHandle(to)} (it comes from ${assignedPhoneNumber})`);
+  try {
+    await messenger.send(normalizeHandle(to), "👋 Tab test: if you can read this, outbound iMessage works. Reply with anything (try a photo too).");
+    console.log(`✅ Sent a test message to ${normalizeHandle(to)} (it comes from ${assignedPhoneNumber})`);
+  } catch (err) {
+    console.log(`❌ Couldn't text ${normalizeHandle(to)}: ${(err as Error).message}`);
+    console.log(`   Try texting ${assignedPhoneNumber} from that iPhone first, and open https://debug.photon.codes to see the handle iMessage really uses.`);
+  }
 }
-console.log(`Listening for 2 minutes. Reply from your iPhone (try a receipt photo too)…`);
-setTimeout(() => process.exit(0), 120_000);
+const minutes = Number(process.env.CHECK_MINUTES ?? 2);
+console.log(`Listening for ${minutes} minute(s). Text the bot from your iPhone (try a receipt photo too)…`);
+setTimeout(() => process.exit(0), minutes * 60_000);

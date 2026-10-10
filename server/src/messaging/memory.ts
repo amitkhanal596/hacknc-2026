@@ -1,9 +1,10 @@
 import { newId } from "../ids";
-import { normalizeHandle, type DMHandler, type InboundImage, type Messenger } from "./types";
+import { normalizeHandle, type DMHandler, type InboundImage, type Messenger, type OutboundImage } from "./types";
 
 export interface SentDM {
   to: string;
   text: string;
+  image?: OutboundImage;
 }
 
 /** In-memory messenger for tests and the simulator. */
@@ -16,6 +17,13 @@ export class MemoryMessenger implements Messenger {
 
   async send(to: string, text: string): Promise<void> {
     const dm = { to: normalizeHandle(to), text };
+    this.outbox.push(dm);
+    this.onSend?.(dm);
+  }
+
+  /** Images show up in the inbox as "[photo: name]" so tests and the simulator can see them. */
+  async sendImage(to: string, image: OutboundImage): Promise<void> {
+    const dm = { to: normalizeHandle(to), text: `[photo: ${image.name}]`, image };
     this.outbox.push(dm);
     this.onSend?.(dm);
   }

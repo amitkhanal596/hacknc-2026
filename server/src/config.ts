@@ -15,7 +15,7 @@ const envSchema = z.object({
   BOT_HANDLE: z.string().default("+15555550100"),
 
   GEMINI_API_KEY: optional,
-  GEMINI_MODEL: z.string().default("gemini-2.5-flash"),
+  GEMINI_MODEL: z.preprocess((v) => (typeof v === "string" && v.trim() === "" ? undefined : v), z.string().default("gemini-3.8-flash,gemini-3.5-flash,gemini-2.5-flash,gemini-2.5-flash-lite")),
 
   SOLANA_RPC_URL: z.string().default("https://api.devnet.solana.com"),
   TREASURY_SECRET_KEY: optional,
@@ -61,7 +61,7 @@ export function describeFeatures(config: Config): string {
   const on = (b: unknown) => (b ? "on " : "off");
   return [
     `  Spectrum iMessage: ${on(config.photon)}${config.photon ? "" : " (use npm run sim)"}`,
-    `  Gemini:            ${on(config.gemini)}${config.gemini ? ` (${config.gemini.model})` : " (regex fallback)"}`,
+    `  Gemini:            ${on(config.gemini)}${config.gemini ? ` (${config.gemini.model.replace(/,/g, " → ")})` : " (regex fallback)"}`,
     `  Solana devnet:     ${on(config.solana)}${config.solana ? "" : " (simulated payments)"}`,
     `  Stripe Apple Pay:  ${on(config.stripe)}`,
     `  Demo mode:         ${on(config.demoMode)}`,
