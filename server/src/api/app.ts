@@ -1,4 +1,6 @@
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
+import QRCode from "qrcode";
 import { z } from "zod";
 import { explain } from "../bot/explain";
 import { disputeShare, handleDM } from "../bot/handler";
@@ -35,10 +37,11 @@ import {
 import { createGroup, getGroup, getGroupByCode, groupsOf, isMember, membersOf } from "../store/groups";
 import { paymentsOf } from "../store/payments";
 import { getOrCreateUser, getUser, getUserByStripeAccount, nameOf, updateUser } from "../store/users";
+import { landingPage, startedPage, tabContactCard } from "../web/landing";
 import { joinedPage, joinPage, messagePage, payPage } from "../web/pages";
 import { startLogin, userIdFromBearer, verifyLogin } from "./auth";
 import { joinInvite } from "../copy";
-import type { User } from "../db/schema";
+import { users, type User } from "../db/schema";
 
 type Env = { Variables: { user: User } };
 
@@ -48,6 +51,55 @@ export function createApp(ctx: Ctx) {
   const app = new Hono<Env>();
 
   app.get("/health", (c) => c.json({ ok: true }));
+
+  // ---------------------------------------------------------------- home page (get your Tab number)
+  // Signups use up Photon's limited shared-user slots, so cap them per IP.
+  const signups = new Map<string, number[]>();
+  const tooManySignups = (ip: string) => {
+    const now = ctx.now();
+    const recent = (signups.get(ip) ?? []).filter((t) => now - t < 10 * 60_000);
+    signups.set(ip, [...recent, now]);
+    return recent.length >= 5;
+  };
+  const clientIp = (c: { req: { header: (n: string) => string | undefined } }) =>
+    c.req.header("cf-connecting-ip") ?? c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
+  const homeQr = () => QRCode.toString(ctx.config.publicBaseUrl, { type: "svg", margin: 1, color: { dark: "#0b3550", light: "#ffffff" } });
+
+  app.get("/", async (c) => c.html(landingPage({ messagingEnabled: !!ctx.registerMessagingUser, qrSvg: await homeQr() })));
+
+  app.post("/start", async (c) => {
+    const form = await c.req.parseBody();
+    const name = String(form.name ?? "").trim().replace(/\s+/g, " ").slice(0, 30);
+    const rawPhone = String(form.phone ?? "").trim();
+    const phone = normalizeHandle(rawPhone);
+    const again = async (error: string, status: 422 | 429 | 503 = 422) =>
+      c.html(landingPage({ messagingEnabled: !!ctx.registerMessagingUser, name, phone: rawPhone, error, qrSvg: await homeQr() }), status);
+    if (!ctx.registerMessagingUser) return again("Texting isn't set up on this server yet.", 503);
+    if (!name) return again("Add your first name.");
+    if (!/^\+[1-9]\d{9,14}$/.test(phone)) return again("Enter your full iPhone number, like (919) 555-1234.");
+    if (tooManySignups(clientIp(c))) return again("Too many signups from here. Try again in a few minutes.", 429);
+
+    let user = getOrCreateUser(ctx, phone);
+    if (!user.displayName) user = updateUser(ctx, user.id, { displayName: name });
+    try {
+      const line = await ensureMessagingAccess(ctx, user);
+      return c.html(startedPage({ name: user.displayName ?? name, line: line!, qrSvg: await homeQr() }));
+    } catch (err) {
+      console.error("[start] messaging registration failed:", (err as Error).message);
+      return again(err instanceof PhotonRegistrationError ? err.message : "Couldn't set up texting right now. Try again in a minute.");
+    }
+  });
+
+  /** "Save Tab to Contacts": only for lines we actually handed out. */
+  app.get("/contact.vcf", (c) => {
+    const line = c.req.query("line") ?? "";
+    const known = !!ctx.db.select({ id: users.id }).from(users).where(eq(users.photonLine, line)).get();
+    if (!known) return c.text("Unknown Tab number", 404);
+    return c.body(tabContactCard(line, ctx.config.publicBaseUrl), 200, {
+      "content-type": "text/vcard; charset=utf-8",
+      "content-disposition": 'attachment; filename="Tab.vcf"',
+    });
+  });
 
   // ---------------------------------------------------------------- auth (extension login)
   app.post("/auth/start", async (c) => {

@@ -41,7 +41,7 @@ Add `-- --persist` to keep data in `./data/sim.db` between runs.
 
 ### Running for real
 
-For iPhone testing and demos use `npm run phone` (tunnel + Stripe Apple Pay domain + webhooks + server). See [TESTING.md](../TESTING.md).
+For iPhone testing and demos use `npm run phone` (tunnel + Stripe Apple Pay domain + webhooks + server). Its public URL's home page is the signup site where organizers get their Tab number. `npm run preview:site` previews that page with fake data. See [TESTING.md](../TESTING.md).
 
 
 ```bash
@@ -72,7 +72,7 @@ src/
   payments/               pay router (caps, Solana, Apple Pay, webhooks), Solana chain + wallets, Stripe rail, signed tokens
   api/                    Hono app: extension API, pay page, Stripe webhook, Connect return
   jobs/                   auto-approve, reminders with backoff, held-payment sweep, stale-payment expiry
-  web/                    HTML for the pay page and status pages
+  web/                    HTML: home/signup page (landing.ts), join, pay and status pages
   copy.ts notify.ts       all user-facing message text; DM send + log
 drizzle/                  SQL migrations (run automatically on boot)
 scripts/                  setup-devnet, phone (iPhone launcher), photon-register, check-photon, check-stripe

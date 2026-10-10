@@ -74,13 +74,11 @@ Your Photon plan uses a **shared pool of iMessage lines**:
 - Only phone numbers registered to your project can text the bot.
 - Each person may be given a **different** number to text.
 
-The app handles this for your friends: the invite link registers them. For yourself, as the organizer:
+The app handles this for everyone:
+- **Organizers** open the **home page** (the public URL from `npm run phone`, e.g. `https://….trycloudflare.com/`). They enter their name and iPhone number and get their Tab number, with buttons to text it and save it as a contact. On a laptop, the page also shows a QR code to scan.
+- **Friends** use the invite link from `new trip …`, which registers them the same way.
 
-```bash
-cd server
-npm run photon:register -- +1YOURNUMBER Amit
-```
-It prints **the number to text**. Save it in Contacts as "Tab".
+Command-line alternative: `npm run photon:register -- +1YOURNUMBER Amit` prints the number to text.
 
 To check the round trip right away (sends you one hello, then prints what you text back for 2 minutes):
 ```bash
@@ -119,6 +117,7 @@ Your phone doesn't need to be on the same Wi-Fi. The tunnel is public.
 | # | On your iPhone | What should happen |
 |---|---|---|
 | 1 | Open the health URL in Safari | `{"ok":true}`, so the phone can reach your laptop |
+| 1b | Open the **home page** (the public URL itself) in Safari. Enter your name and number, then tap **Text Tab to start a trip**. | Your Tab number, plus "Text Tab" / "Save to Contacts" buttons |
 | 2 | Text Tab: `new trip Test` | "Test Trip created!" plus an invite link (`…/j/TESTT12`) and "What should I call you?" Reply with your name. |
 | 3 | Open the invite link on a **second phone** (or send it to a friend) | A join page. Enter a name + iPhone number, tap **Join**. That phone gets a text from Tab, and you get "👋 Jake joined". |
 | 4 | Send Tab a **photo of any receipt** with a caption like `gas, everyone` | "Logged to Test Trip: Gas $X · split 2 ways · 🧾 receipt matched". Your friend is asked to approve. |
@@ -145,7 +144,7 @@ Your phone doesn't need to be on the same Wi-Fi. The tunnel is public.
 ### What the judges see (about 3 minutes)
 Three phones (you plus two teammates), with the laptop showing the `npm run phone` logs or the simulator as a backup:
 
-1. **Setup (before you present):** run `npm run phone`. Text `new trip Asheville` and paste the invite link into your real group chat. Teammates join through the link, so their phones are registered and Tab has texted them.
+1. **Setup (before you present):** run `npm run phone` and open the home page on the laptop. Its QR code lets anyone at the table scan and get their own Tab number. Text `new trip Asheville` and paste the invite link into your real group chat. Teammates join through the link, so their phones are registered and Tab has texted them.
 2. **Live:** a teammate photographs a real receipt and texts it with "gas, everyone". Every phone buzzes with its own approval request.
 3. Someone texts **"pay me $20"**: Tab asks what it was for. This is the anti-abuse moment.
 4. One teammate **disputes** an expense. The payer gets FIX / WITHDRAW options and sends a receipt photo. Everyone re-approves.
@@ -214,7 +213,8 @@ Text messages fall back to the built-in parser if every model fails. Photos can'
 |---|---|
 | `npm test` | All 51 tests (no network) |
 | `npm run sim` | Text the bot from your terminal as different people |
-| `npm run phone` | Tunnel + Stripe domain + webhooks + server, for iPhone testing and demos |
+| `npm run phone` | Tunnel + Stripe domain + webhooks + server, for iPhone testing and demos. The public URL's home page is the signup site. |
+| `npm run preview:site` | Preview the home page design with fake data (http://localhost:3994, also `/started` and `/error`) |
 | `npm run dev` | Server only (Photon + API + jobs), restarts on file changes |
 | `npm run photon:register -- +1… Name` | Register a phone with Photon and print the number it should text |
 | `npm run check:photon -- +1…` | Register, text yourself a hello, print replies for 2 minutes |

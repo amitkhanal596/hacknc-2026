@@ -102,6 +102,7 @@ What's left:
 ## Phase 7: Demo polish
 - [x] `npm run phone`: tunnel + Stripe Apple Pay domain + webhooks + server in one command
 - [x] TESTING.md: iPhone testing + in-person demo guide
+- [x] Home page / signup site (Frutiger Aero): get your Tab number, text/save-contact buttons, QR code on laptops (`/`, `/start`, `/contact.vcf`; `npm run preview:site`)
 - [ ] Deploy (Railway/Fly) with a fixed domain (sturdier than a quick tunnel)
 - [ ] Seed script for a demo group
 - [ ] Demo script (Asheville scenario) rehearsed on 3 phones
@@ -152,3 +153,4 @@ npm run dev               # real server (Spectrum + HTTP API + jobs)
 | 2026-10-10 | AK + Claude | Built the server: ledger, DM bot, Gemini/regex extractors, Solana (real + simulated), Stripe Apple Pay + Connect v2, extension API, pay page, jobs, simulator. 40 tests passing. Docs updated with an "As built" section. |
 | 2026-10-10 | AK + Claude | Keys set up in `server/.env` (Gemini, Stripe + webhook secret, Photon, generated secrets, Solana treasury). Installed Stripe CLI + cloudflared. Live-tested Gemini (receipt photo), Stripe (PaymentIntent + webhook), Photon (connect). Found Photon shared-line rules → added user registration + web join page. Added `npm run phone`, check scripts, TESTING.md. 44 tests. |
 | 2026-10-10 | AK + Claude | Live end-to-end on a real iPhone (Photon both ways, real devnet PAY, Stripe Connect). Join page now hands people a pre-filled JOIN text (shared lines need them to text first). Receipt photos forwarded to approvers; random pictures rejected; Gemini model chain + timeouts after hitting the free-tier 20/day limit. 51 tests. |
+| 2026-10-10 | AK + Claude | Frutiger Aero home page replaces `npm run photon:register` for organizers: enter name + number → Tab number, text/save-contact buttons, QR for the demo table. 56 tests. |
