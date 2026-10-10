@@ -25,6 +25,7 @@ export function getOrCreateUser(ctx: Ctx, phone: string): User {
     phone: normalizeHandle(phone),
     displayName: null,
     activeGroupId: null,
+    photonLine: null,
     walletPubkey: null,
     walletSecretEnc: null,
     stripeAccountId: null,

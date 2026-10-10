@@ -1,6 +1,6 @@
 # Tab server
 
-The bot, ledger, payments, and the HTTP API behind the iMessage extension and the Apple Pay pay page. Design docs: [../ARCHITECTURE.md](../ARCHITECTURE.md). Status: [../PROGRESS.md](../PROGRESS.md).
+The bot, ledger, payments, and the HTTP API behind the iMessage extension and the Apple Pay pay page. Design docs: [../ARCHITECTURE.md](../ARCHITECTURE.md). Status: [../PROGRESS.md](../PROGRESS.md). **Keys, live tests, and testing on your iPhone: [../TESTING.md](../TESTING.md).**
 
 ## Quick start
 
@@ -8,7 +8,7 @@ The bot, ledger, payments, and the HTTP API behind the iMessage extension and th
 cd server
 npm install
 cp .env.example .env   # every key is optional; missing ones fall back to local stubs
-npm test               # 40 tests: ledger, the full DM scenario, API, jobs, Stripe flow
+npm test               # 44 tests: ledger, the full DM scenario, API, jobs, Stripe flow, join page
 npm run sim            # text the bot as different people from your terminal
 ```
 
@@ -21,7 +21,7 @@ Needs Node 22+. No Bun or global installs required.
 ```
 [amit] > new trip Asheville
 📱 Tab → amit: Asheville Trip created! Paste this in your group chat so people can join:
-📱 Tab → amit: Join our Asheville Trip tab 👉 sms:+15555550100&body=JOIN%20ASHEV09
+📱 Tab → amit: Join our Asheville Trip tab 👉 http://localhost:3000/j/ASHEV09
 [amit] > /as jake
 [jake] > JOIN ASHEV09
 [jake] > /as amit
@@ -32,6 +32,7 @@ Needs Node 22+. No Bun or global installs required.
 |---|---|
 | `/as <name>` | Switch who's texting. New names get a fake phone number. |
 | `/receipt <amount> [merchant] [\| caption]` | Send a fake receipt photo (no Gemini needed). |
+| `/photo <file> [\| caption]` | Send a real image (Gemini reads it). |
 | `/advance <minutes>` | Move the clock forward, then run jobs (auto-approve, reminders). |
 | `/jobs` | Run jobs now. |
 | `/who`, `/quit` | |
@@ -40,6 +41,9 @@ Add `-- --persist` to keep data in `./data/sim.db` between runs.
 
 ### Running for real
 
+For iPhone testing and demos use `npm run phone` (tunnel + Stripe Apple Pay domain + webhooks + server). See [TESTING.md](../TESTING.md).
+
+
 ```bash
 npm run dev            # Spectrum DMs + HTTP API + jobs (restarts on file changes)
 npm start              # same, without watch
@@ -47,12 +51,12 @@ npm start              # same, without watch
 
 | Feature | Turn it on with | Without it |
 |---|---|---|
-| iMessage DMs | `PHOTON_PROJECT_ID`, `PHOTON_PROJECT_SECRET` | Outbound DMs are printed to the console. Use `npm run sim` to talk to the bot. |
+| iMessage DMs | `PHOTON_PROJECT_ID`, `PHOTON_PROJECT_SECRET`. On shared-line plans each phone must be registered: the `/j/:code` join page does it, or `npm run photon:register -- +1… Name`. | Outbound DMs are printed to the console. Use `npm run sim` to talk to the bot. |
 | Gemini | `GEMINI_API_KEY` (and optionally `GEMINI_MODEL`) | Regex extractor: handles "paid $80 for gas, split with jake and sam". Can't read real photos. |
-| Solana devnet | `npm run setup:devnet`, then paste `TREASURY_SECRET_KEY` + `USDC_MINT` | Simulated transfers, clearly labeled "USDC, simulated". |
+| Solana devnet | `npm run setup:devnet` (writes `TREASURY_SECRET_KEY` + `USDC_MINT` into `.env`) | Simulated transfers, clearly labeled "USDC, simulated". |
 | Apple Pay | `STRIPE_SECRET_KEY`, `STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET` | Settle-up texts only offer USDC. |
 
-**Stripe setup (test mode):** use a Stripe [sandbox](https://docs.stripe.com/sandboxes) and a restricted key if you can. Enable Connect. Register the deployed domain under Settings → Payment method domains so the Apple Pay button shows in Safari. For local webhooks: `stripe listen --forward-to localhost:3000/stripe/webhook`, and put the printed `whsec_…` in `STRIPE_WEBHOOK_SECRET`.
+**Stripe setup (test mode):** use a Stripe [sandbox](https://docs.stripe.com/sandboxes) and a restricted key if you can. Enable Connect. Register the deployed domain under Settings → Payment method domains so the Apple Pay button shows in Safari. For local webhooks: `stripe listen --events payment_intent.succeeded,payment_intent.payment_failed,account.updated,transfer.created --forward-to localhost:3000/stripe/webhook` (`npm run phone` does this for you), and put the printed `whsec_…` in `STRIPE_WEBHOOK_SECRET`.
 
 ## Layout
 
@@ -71,7 +75,7 @@ src/
   web/                    HTML for the pay page and status pages
   copy.ts notify.ts       all user-facing message text; DM send + log
 drizzle/                  SQL migrations (run automatically on boot)
-scripts/setup-devnet.ts   treasury + tUSDC mint on Solana devnet
+scripts/                  setup-devnet, phone (iPhone launcher), photon-register, check-photon, check-stripe
 test/                     vitest suites
 ```
 
@@ -79,6 +83,6 @@ Changing the schema: edit `src/db/schema.ts`, then `npx drizzle-kit generate --n
 
 ## Bot commands (1:1 DMs)
 
-`NEW <name>` · `JOIN <code> [- I'm Name]` · `USE <group>` · `GROUPS` · `NAME <name>` · `BALANCE` · `SETTLE` · `PAY [name]` · `WHY [name]` · `YES` / `YES ALL` / `YES 1 3` · `DISPUTE [n] <reason>` · `FIX $amount` / `WITHDRAW` (payer, after a dispute) · `PAYOUTS` · `HELP`
+`NEW <name>` (replies with an invite link to `/j/<code>`) · `JOIN <code> [- I'm Name]` · `USE <group>` · `GROUPS` · `NAME <name>` · `BALANCE` · `SETTLE` · `PAY [name]` · `WHY [name]` · `YES` / `YES ALL` / `YES 1 3` · `DISPUTE [n] <reason>` · `FIX $amount` / `WITHDRAW` (payer, after a dispute) · `PAYOUTS` · `HELP`
 
 Anything else is treated as a possible expense: text ("paid $80 for gas, split with jake and sam"), a receipt photo, or a screenshot of a chat message.

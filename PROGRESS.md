@@ -4,39 +4,42 @@ Tracks what's built, what's left, and what's blocked. Update it as you go: check
 
 **Legend:** `[x]` done · `[~]` in progress / partly done · `[ ]` not started · 🔒 blocked on credentials or access
 
-Related docs: [PLAN.md](./PLAN.md) (what & why) · [ARCHITECTURE.md](./ARCHITECTURE.md) (how, including an "As built" section) · [server/README.md](./server/README.md) (how to run)
+Related docs: [PLAN.md](./PLAN.md) (what & why) · [ARCHITECTURE.md](./ARCHITECTURE.md) (how, including an "As built" section) · [server/README.md](./server/README.md) (how to run) · **[TESTING.md](./TESTING.md) (keys, live tests, iPhone + demo guide)**
 
 ---
 
 ## Where things stand
 
-The **server is built and tested end to end without any credentials**: 40 tests cover the ledger, the full Asheville scenario over DMs, the extension API, jobs, and the Apple Pay flow (against a fake Stripe). `npm run sim` lets anyone text the bot as different people from a terminal.
+The **server is built and tested**, with live checks against Gemini, Stripe, and Photon (see [TESTING.md](./TESTING.md)): 44 tests cover the ledger, the full Asheville scenario over DMs, the extension API, jobs, and the Apple Pay flow (against a fake Stripe). `npm run sim` lets anyone text the bot as different people from a terminal.
 
-What's left falls into three buckets:
-1. **Plug in credentials and verify against the real services** (Photon, Gemini, devnet, Stripe). The code paths exist but have only run against stand-ins.
-2. **The iOS iMessage extension** (not started). The API it needs is done.
-3. **Polish:** link-preview images, deploy, demo script.
+What's left:
+1. **Three quick manual steps** ([TESTING.md §2](./TESTING.md#2-the-three-things-only-you-can-do-5-minutes-total)): devnet faucet SOL, Stripe Connect loss-liability acknowledgement, register your phone with Photon.
+2. **Verify on real phones:** a DM round trip and the Apple Pay sheet.
+3. **The iOS iMessage extension** (not started). The API it needs is done.
+4. **Polish:** link-preview images, fixed-domain deploy, demo rehearsal.
 
 ## Credentials & access checklist
 | Item | Needed for | Status |
 |---|---|---|
-| Photon Spectrum project ID + secret | Real iMessage DMs | 🔒 |
-| Gemini API key | Reading receipts/screenshots, smarter text parsing | 🔒 (regex fallback works for text) |
-| Stripe sandbox (Connect enabled) + keys | Apple Pay + payouts | 🔒 |
-| Stable HTTPS deploy URL (Railway/Fly) | Apple Pay domain, webhooks, extension API | 🔒 |
-| Solana devnet treasury (`npm run setup:devnet`) | Real USDC transfers | [ ] script ready, not run yet |
+| Photon Spectrum project ID + secret | Real iMessage DMs | [x] connects (Pro plan, shared line) |
+| Register organizer's phone with Photon | Texting the bot on a shared line | [ ] `npm run photon:register -- +1… Name` |
+| Gemini API key | Reading receipts/screenshots, smarter text parsing | [x] verified on a real receipt photo |
+| Stripe sandbox keys + webhook secret | Apple Pay | [x] live PaymentIntent + webhook verified |
+| Stripe Connect platform profile (loss liability) | Payouts to the person owed | [ ] Dashboard step (TESTING.md 2b) |
+| HTTPS URL | Apple Pay domain, webhooks, links on phones | [x] `npm run phone` (cloudflared quick tunnel); fixed deploy still [ ] |
+| Solana devnet treasury | Real USDC transfers | [~] wallet + secrets generated; needs faucet SOL, then `npm run setup:devnet` |
 | iPhone + Xcode free provisioning | iMessage extension | [ ] |
 
 ---
 
 ## Phase 0: Spike (H0–2)
-- [ ] Spectrum: receive a DM, send a DM, get the sender's phone number 🔒
-- [ ] Spectrum: download an image attachment (JPG + HEIC) 🔒
-- [ ] Spectrum: can the bot text a number that never texted it? 🔒 (design doesn't need it)
-- [ ] Spectrum: outbound rate limits 🔒
-- [ ] Stripe: Apple Pay button shows on the deployed domain in iPhone Safari 🔒
-- [ ] Stripe: Connect (Accounts v2) onboarding completes in test mode 🔒
-- [ ] Solana: run `npm run setup:devnet` (treasury + tUSDC mint)
+- [x] Spectrum: credentials connect; project is on a **shared** line (each user must be registered, may get a different number)
+- [x] Spectrum: the bot can text a number first **once it's registered** (join page does this)
+- [ ] Spectrum: real DM round trip + image attachment from an iPhone (`npm run check:photon -- +1…`)
+- [x] Stripe: tunnel domain registered with Apple Pay status **active**
+- [ ] Stripe: Apple Pay sheet on a real iPhone
+- [ ] Stripe: Connect onboarding (blocked on the Dashboard loss-liability step)
+- [~] Solana: treasury created; waiting on faucet SOL
 - [ ] Xcode: iMessage App template runs on a phone
 
 ## Phase 1: Server foundation
@@ -44,7 +47,8 @@ What's left falls into three buckets:
 - [x] `config.ts`: zod env parsing; missing keys turn features off
 - [x] DB schema (Drizzle + better-sqlite3 v12) + migrations on boot
 - [x] Messaging interface + in-memory adapter + **terminal simulator** (`npm run sim`)
-- [~] Spectrum adapter (`messaging/spectrum.ts`): written against spectrum-ts 12.10 types, typechecks, **not run against real Photon yet** 🔒
+- [~] Spectrum adapter (`messaging/spectrum.ts`): connects to real Photon; inbound/outbound round trip still to be checked from a phone
+- [x] Photon shared-line support: user registration (`messaging/photon-users.ts`), web join page `/j/:code`, `npm run photon:register`
 
 ## Phase 2: Ledger (pure logic, unit tested)
 - [x] `splits.ts`: equal / custom, cent-exact; payer absorbs leftover cents
@@ -54,9 +58,9 @@ What's left falls into three buckets:
 
 ## Phase 3: Bot (1:1 DMs)
 - [x] Command parser: NEW, JOIN, USE, GROUPS, NAME, BALANCE, SETTLE, PAY, WHY, YES, DISPUTE, FIX, WITHDRAW, PAYOUTS, HELP
-- [x] Groups: create, join codes, `sms:` invite link, active group, name capture, join announcements
+- [x] Groups: create, join codes, web invite link (`/j/:code`), active group, name capture, join announcements
 - [x] Expense capture from text (Gemini with regex fallback)
-- [~] Expense capture from images: receipts + chat screenshots. Pipeline done and tested with fake receipts; **real photos need Gemini** 🔒
+- [x] Expense capture from images: verified with real Gemini on a receipt photo (simulator `/photo`)
 - [x] Approval DMs to each person, batched (YES ALL / YES 1 3 / DISPUTE 2 reason)
 - [x] Prompts per kind so bare replies resolve safely ("what was the $20 for?" → "firewood")
 - [x] Disputes → payer can FIX $amount, WITHDRAW, or send a receipt photo; everyone re-approves
@@ -66,12 +70,12 @@ What's left falls into three buckets:
 ## Phase 4: Payments
 - [x] Payment router: cap at approved debt minus in-flight payments; records; confirmations to both sides
 - [x] Solana: wallet creation + AES-256-GCM key encryption
-- [x] Solana: `scripts/setup-devnet.ts` (treasury, tUSDC mint, airdrop) — written, not run yet
+- [~] Solana: `scripts/setup-devnet.ts` writes secrets to `.env`; treasury created, mint waits on faucet SOL
 - [~] Solana: fund new wallets, `transferChecked` with treasury as fee payer. Written; tested only via `SimulatedChain`. Needs a devnet run.
 - [x] Signed pay-link tokens (HMAC, 24h expiry)
-- [~] Stripe: PaymentIntent for Apple Pay (destination charge, or held on platform) — tested with a fake Stripe 🔒
-- [~] Stripe: Connect onboarding with **Accounts v2** (recipient config, Express dashboard) + return/refresh pages 🔒
-- [~] Stripe: webhook handler (succeeded, failed, account.updated, transfer.created) — tested with fake events 🔒
+- [x] Stripe: PaymentIntent for Apple Pay — verified live (test card) + webhook marks it held/confirmed
+- [~] Stripe: Connect onboarding with **Accounts v2** — code done; account creation blocked until the Dashboard loss-liability step
+- [x] Stripe: webhook handler — `payment_intent.succeeded` verified live through `stripe listen`
 - [~] Stripe: release held transfers (`source_transaction`) — tested with a fake Stripe 🔒
 - [~] Pay page (`/p/:token`): breakdown + Express Checkout Element (Apple Pay) + "pay with USDC". Renders and pays USDC in tests; Apple Pay button needs a real key + Safari 🔒
 
@@ -94,7 +98,9 @@ What's left falls into three buckets:
 - [ ] MSMessage cards for the group chat
 
 ## Phase 7: Demo polish
-- [ ] Deploy (Railway/Fly) + domain registered with Stripe 🔒
+- [x] `npm run phone`: tunnel + Stripe Apple Pay domain + webhooks + server in one command
+- [x] TESTING.md: iPhone testing + in-person demo guide
+- [ ] Deploy (Railway/Fly) with a fixed domain (sturdier than a quick tunnel)
 - [ ] Seed script for a demo group
 - [ ] Demo script (Asheville scenario) rehearsed on 3 phones
 - [ ] Demo video
@@ -114,12 +120,13 @@ What's left falls into three buckets:
 cd server
 npm install
 cp .env.example .env      # fill in whatever keys you have; missing ones fall back to stubs
-npm test                  # 40 tests
+npm test                  # 44 tests
 npm run sim               # local DM simulator, no Spectrum needed
 npm run dev               # real server (Spectrum + HTTP API + jobs)
 ```
 
 ## Decisions made during implementation
+- **Invites are a web join page, not "text this number".** Photon's shared line only talks to registered numbers and can give each person a different number. The join page registers the phone with Photon, then the bot texts them first.
 - **Node 22 + tsx instead of Bun.** Node is already installed and Bun isn't. Same TypeScript; `vitest` for tests.
 - **better-sqlite3 pinned to v12.** v13 segfaults on Node 22.11.
 - **npm override: `rpc-websockets` uses uuid v11.** `@solana/web3.js` pulls in an ESM-only uuid that Node < 22.12 can't `require()`.
@@ -141,3 +148,4 @@ npm run dev               # real server (Spectrum + HTTP API + jobs)
 |---|---|---|
 | 2026-10-10 | AK + Claude | Created PROGRESS.md. Starting Phase 1 (server foundation) and Phase 2 (ledger). |
 | 2026-10-10 | AK + Claude | Built the server: ledger, DM bot, Gemini/regex extractors, Solana (real + simulated), Stripe Apple Pay + Connect v2, extension API, pay page, jobs, simulator. 40 tests passing. Docs updated with an "As built" section. |
+| 2026-10-10 | AK + Claude | Keys set up in `server/.env` (Gemini, Stripe + webhook secret, Photon, generated secrets, Solana treasury). Installed Stripe CLI + cloudflared. Live-tested Gemini (receipt photo), Stripe (PaymentIntent + webhook), Photon (connect). Found Photon shared-line rules → added user registration + web join page. Added `npm run phone`, check scripts, TESTING.md. 44 tests. |

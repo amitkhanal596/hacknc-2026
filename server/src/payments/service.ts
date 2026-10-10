@@ -96,12 +96,25 @@ export async function createApplePayIntent(
   return { ok: true, clientSecret: intent.client_secret!, cents, paymentId: payment.id };
 }
 
+/** Thrown when the Stripe account itself isn't set up for Connect payouts yet (a Dashboard step, not a code problem). */
+export class PayoutsUnavailableError extends Error {}
+
 /** Starts (or resumes) Stripe Connect onboarding for someone who wants card/Apple Pay payouts. */
 export async function payoutsOnboardingLink(ctx: Ctx, userId: string): Promise<string | undefined> {
   if (!ctx.stripe) return undefined;
   let user = getUser(ctx, userId)!;
   if (!user.stripeAccountId) {
-    user = updateUser(ctx, user.id, { stripeAccountId: await ctx.stripe.createRecipientAccount(user.id) });
+    try {
+      user = updateUser(ctx, user.id, { stripeAccountId: await ctx.stripe.createRecipientAccount(user.id) });
+    } catch (err) {
+      if ((err as { code?: string }).code === "account_creation_losses_collector_unavailable") {
+        console.error(
+          "[stripe] Connect payouts need a one-time Dashboard step: Settings → Connect → Platform profile → complete the loss-liability acknowledgement (https://dashboard.stripe.com/settings/connect/platform-profile).",
+        );
+        throw new PayoutsUnavailableError("platform loss liability not acknowledged");
+      }
+      throw err;
+    }
   }
   return ctx.stripe.onboardingLink(user.stripeAccountId!);
 }

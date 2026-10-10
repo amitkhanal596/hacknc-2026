@@ -10,7 +10,7 @@ import { splitEqual } from "../ledger/splits";
 import { mismatchTolerance, validateExpense, type ReceiptInfo } from "../ledger/validate";
 import type { InboundDM } from "../messaging/types";
 import { dm } from "../notify";
-import { notifyCreditor, paySolana, payoutsOnboardingLink } from "../payments/service";
+import { notifyCreditor, paySolana, payoutsOnboardingLink, PayoutsUnavailableError } from "../payments/service";
 import { clearPrompt, getPrompt, logDM, recentInbound, setPrompt } from "../store/dms";
 import {
   applyShareAction,
@@ -30,6 +30,7 @@ import { activeGroup, addMember, createGroup, findUserGroup, getGroup, getGroupB
 import { ensureWallet, getOrCreateUser, getUser, nameOf, updateUser } from "../store/users";
 import { looksLikeName, parseCommand, type Command } from "./commands";
 import { explain } from "./explain";
+import { announceJoin, joinGroup } from "./join";
 import { approvalText, sendApprovalRequests, settleText } from "./messages";
 
 /** Entry point for every inbound 1:1 DM. */
@@ -51,7 +52,10 @@ export async function handleDM(ctx: Ctx, msg: InboundDM): Promise<void> {
         user = updateUser(ctx, user.id, { displayName: name });
         clearPrompt(ctx, user.id, "name");
         await reply(`Nice to meet you, ${name}! Text me receipts or things like "paid $40 for snacks" and I'll keep track.`);
-        if (namePrompt.announceGroupId) await announceJoin(ctx, user, namePrompt.announceGroupId);
+        if (namePrompt.announceGroupId) {
+          const g = getGroup(ctx, namePrompt.announceGroupId);
+          if (g) await announceJoin(ctx, user.id, g);
+        }
         return;
       }
     }
@@ -110,7 +114,7 @@ async function runCommand(ctx: Ctx, user: User, cmd: Command, reply: Reply): Pro
       const g = createGroup(ctx, user, cmd.name, cmd.kind);
       await ensureWallet(ctx, user);
       await reply(`${g.name} created! Paste this in your group chat so people can join:`);
-      await reply(joinInvite(g, ctx.config.botHandle));
+      await reply(joinInvite(g, ctx.config));
       if (!user.displayName) {
         setPrompt(ctx, user.id, { kind: "name" }, timings(ctx.config).promptTtlMs);
         await reply(ASK_NAME);
@@ -121,17 +125,8 @@ async function runCommand(ctx: Ctx, user: User, cmd: Command, reply: Reply): Pro
     case "join": {
       const g = getGroupByCode(ctx, cmd.code);
       if (!g) return reply(`I couldn't find a group with code ${cmd.code}. Double-check it with whoever invited you.`);
-      const added = addMember(ctx, g.id, user.id);
-      if (cmd.name) user = updateUser(ctx, user.id, { displayName: cmd.name });
-      await ensureWallet(ctx, user);
-      const others = membersOf(ctx, g.id).filter((m) => m.id !== user.id).map(nameOf);
-      if (!added) return reply(`You're already in ${g.name}. I've made it your active group.`);
-      await reply(
-        `You're in ${g.name}${others.length ? ` with ${listOf(others)}` : ""}! Text me receipts or "paid $X for Y" and I'll keep track. I'll ask before you owe anything.`,
-      );
-      if (user.displayName) return announceJoin(ctx, user, g.id);
-      setPrompt(ctx, user.id, { kind: "name", announceGroupId: g.id }, timings(ctx.config).promptTtlMs);
-      return reply(ASK_NAME);
+      await joinGroup(ctx, user, g, cmd.name);
+      return;
     }
 
     case "use": {
@@ -190,18 +185,16 @@ async function runCommand(ctx: Ctx, user: User, cmd: Command, reply: Reply): Pro
     }
 
     case "payouts": {
-      const link = await payoutsOnboardingLink(ctx, user.id);
+      let link: string | undefined;
+      try {
+        link = await payoutsOnboardingLink(ctx, user.id);
+      } catch (err) {
+        if (!(err instanceof PayoutsUnavailableError)) throw err;
+        return reply("Bank payouts aren't switched on for this Tab server yet (the organizer needs to finish Stripe setup). You can still get paid in USDC.");
+      }
       if (!link) return reply("Card and Apple Pay payouts aren't set up on this server yet. You can still get paid in USDC.");
       return reply(`Set up payouts (takes ~2 minutes) so Apple Pay payments land in your bank: ${link}`);
     }
-  }
-}
-
-async function announceJoin(ctx: Ctx, user: User, groupId: string) {
-  const g = getGroup(ctx, groupId);
-  if (!g) return;
-  for (const m of membersOf(ctx, groupId)) {
-    if (m.id !== user.id) await dm(ctx, m.id, `👋 ${nameOf(user)} joined ${g.name}.`);
   }
 }
 
@@ -432,7 +425,9 @@ async function captureExpense(ctx: Ctx, user: User, group: Group, msg: InboundDM
     ? await ctx.extractor.extractFromText({ text: describedText, senderId: user.id, members, recent: recentInbound(ctx, user.id, 20).slice(0, -1) })
     : undefined;
 
-  if (!receipt && !extraction?.isExpense) {
+  // Gemini calls "pay me $20" "not an expense"; it's really one missing its reason, so ask.
+  const moneyAsk = !!extraction?.amountCents && /\$|\b(pay|paid|owe|send|venmo|spent)\b/i.test(describedText);
+  if (!receipt && !extraction?.isExpense && !moneyAsk) {
     return reply(`I didn't catch an expense there. Try "paid $80 for gas" or send a receipt photo. Text HELP for everything I can do.`);
   }
 

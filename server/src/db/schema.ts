@@ -7,6 +7,8 @@ export const users = sqliteTable("users", {
   phone: text("phone").notNull().unique(),
   displayName: text("display_name"),
   activeGroupId: text("active_group_id"),
+  /** The Photon shared-pool line this person texts (each person can have a different one). */
+  photonLine: text("photon_line"),
   walletPubkey: text("wallet_pubkey"),
   walletSecretEnc: text("wallet_secret_enc"),
   stripeAccountId: text("stripe_account_id"),

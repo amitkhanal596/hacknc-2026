@@ -107,3 +107,44 @@ export function payPage(d: PayPageData) {
 export function messagePage(title: string, message: string) {
   return layout(title, html`<div class="card"><p class="amount" style="font-size:28px">${title}</p><p class="to">${message}</p></div>`);
 }
+
+export function joinPage(d: { code: string; groupName: string; members: string[]; error?: string; phone?: string; name?: string }) {
+  return layout(
+    `Join ${d.groupName}`,
+    html`<div class="card">
+        <h1>You're invited to</h1>
+        <p class="amount" style="font-size:32px">${d.groupName}</p>
+        <p class="to">${d.members.length ? `with ${d.members.join(", ")}` : ""}</p>
+      </div>
+      <div class="card">
+        <form method="post" action="/j/${d.code}">
+          <label class="muted" for="name">Your first name</label>
+          <input id="name" name="name" required maxlength="30" autocomplete="given-name" value="${d.name ?? ""}"
+            style="width:100%;padding:12px;margin:6px 0 14px;border-radius:12px;border:1px solid var(--line);font-size:17px;background:transparent;color:var(--ink)" />
+          <label class="muted" for="phone">Your iPhone number (the one iMessage uses)</label>
+          <input id="phone" name="phone" required type="tel" autocomplete="tel" placeholder="(919) 555-1234" value="${d.phone ?? ""}"
+            style="width:100%;padding:12px;margin:6px 0 14px;border-radius:12px;border:1px solid var(--line);font-size:17px;background:transparent;color:var(--ink)" />
+          ${d.error ? html`<p style="color:#d70015;margin:0 0 12px">${d.error}</p>` : ""}
+          <button class="secondary" type="submit" style="background:var(--ink);color:var(--bg);border:0">Join &amp; get a text from Tab</button>
+        </form>
+      </div>
+      <p class="muted" style="text-align:center">Tab texts you to track shared costs. You only owe what you approve.</p>`,
+  );
+}
+
+export function joinedPage(d: { groupName: string; line?: string; code: string }) {
+  const sms = d.line ? `sms:${d.line}&body=${encodeURIComponent("hi")}` : undefined;
+  return layout(
+    "You're in",
+    html`<div class="card">
+        <p class="amount" style="font-size:30px">✅ You're in ${d.groupName}</p>
+        <p class="to">Tab just texted you${d.line ? html` from <b>${d.line}</b>` : ""}. Check Messages.</p>
+      </div>
+      ${sms
+        ? html`<div class="card">
+            <p class="muted" style="margin-top:0">Save that number as a contact named "Tab" so it's easy to find. Didn't get a text?</p>
+            <a href="${sms}"><button class="secondary" type="button">Open a chat with Tab</button></a>
+          </div>`
+        : ""}`,
+  );
+}

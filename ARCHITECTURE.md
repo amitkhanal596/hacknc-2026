@@ -17,6 +17,7 @@ The server is implemented and tested. Where it differs from the original design 
 | Prompts | One open prompt per user | One per user **per kind** (`approve`, `reason`, `name`, `fix`) | A payer's open "fix" prompt shouldn't be overwritten by an approval request. |
 | Leftover cents | Spread across the first participants | The **payer absorbs leftover cents**, so everyone else pays the same | "$26.66 each" instead of $26.67 / $26.66. |
 | No credentials | n/a | Every integration has a local stand-in: `MemoryMessenger`, regex extractor, `SimulatedChain`, Stripe off. `npm run sim` drives the real bot from a terminal. | The team can build and demo before Photon, Gemini, Stripe, and devnet keys exist. |
+| Joining a group | Paste "text JOIN CODE to the bot's number" | **Web join page** `/j/:code`: enter name + phone → registered with Photon (`POST /projects/{id}/users/`, `type: "shared"`) → added to the group → the bot texts them first | Photon's shared-line plans only talk to registered numbers, and each person may get a **different** number. There is no single bot number to share. |
 | Not built yet | | Link-preview images (`/og`), daily digest, recurring bills, iOS extension | Tracked in PROGRESS.md. |
 
 **Two constraints shape the design:**

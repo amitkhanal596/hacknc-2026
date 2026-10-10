@@ -2,6 +2,9 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { explain } from "../bot/explain";
 import { disputeShare, handleDM } from "../bot/handler";
+import { ensureMessagingAccess, joinGroup } from "../bot/join";
+import { PhotonRegistrationError } from "../messaging/photon-users";
+import { normalizeHandle } from "../messaging/types";
 import type { Ctx } from "../context";
 import { flagBadges } from "../copy";
 import { groupDebts, payableCents } from "../ledger/debts";
@@ -14,6 +17,7 @@ import {
   paySolana,
   payLinkUrl,
   payoutsOnboardingLink,
+  PayoutsUnavailableError,
   readPayLink,
   refreshPayoutStatus,
 } from "../payments/service";
@@ -28,10 +32,10 @@ import {
   sharesOf,
   userSharesInGroup,
 } from "../store/expenses";
-import { createGroup, getGroup, groupsOf, isMember, membersOf } from "../store/groups";
+import { createGroup, getGroup, getGroupByCode, groupsOf, isMember, membersOf } from "../store/groups";
 import { paymentsOf } from "../store/payments";
-import { getUser, getUserByStripeAccount, nameOf, updateUser } from "../store/users";
-import { messagePage, payPage } from "../web/pages";
+import { getOrCreateUser, getUser, getUserByStripeAccount, nameOf, updateUser } from "../store/users";
+import { joinedPage, joinPage, messagePage, payPage } from "../web/pages";
 import { startLogin, userIdFromBearer, verifyLogin } from "./auth";
 import { joinInvite } from "../copy";
 import type { User } from "../db/schema";
@@ -87,7 +91,7 @@ export function createApp(ctx: Ctx) {
     const body = z.object({ name: z.string().min(1).max(60), kind: z.enum(["trip", "roommates", "dinner", "club"]).default("trip") }).safeParse(await c.req.json().catch(() => ({})));
     if (!body.success) return c.json({ message: "Send { name, kind? }." }, 400);
     const g = createGroup(ctx, c.get("user"), body.data.name, body.data.kind);
-    return c.json({ group: g, invite: joinInvite(g, ctx.config.botHandle) }, 201);
+    return c.json({ group: g, invite: joinInvite(g, ctx.config) }, 201);
   });
 
   api.get("/groups/:id", (c) => {
@@ -216,11 +220,48 @@ export function createApp(ctx: Ctx) {
   });
 
   api.post("/connect/onboard", async (c) => {
-    const url = await payoutsOnboardingLink(ctx, c.get("user").id);
-    return url ? c.json({ url }) : c.json({ message: "Stripe isn't configured." }, 501);
+    try {
+      const url = await payoutsOnboardingLink(ctx, c.get("user").id);
+      return url ? c.json({ url }) : c.json({ message: "Stripe isn't configured." }, 501);
+    } catch (err) {
+      if (err instanceof PayoutsUnavailableError) return c.json({ message: "Bank payouts aren't enabled on this server's Stripe account yet." }, 503);
+      throw err;
+    }
   });
 
   app.route("/api", api);
+
+  // ---------------------------------------------------------------- join page (the invite link)
+  app.get("/j/:code", (c) => {
+    const group = getGroupByCode(ctx, c.req.param("code"));
+    if (!group) return c.html(messagePage("Invite not found", "Double-check the link with whoever invited you."), 404);
+    return c.html(joinPage({ code: group.joinCode, groupName: group.name, members: membersOf(ctx, group.id).map(nameOf) }));
+  });
+
+  app.post("/j/:code", async (c) => {
+    const group = getGroupByCode(ctx, c.req.param("code"));
+    if (!group) return c.html(messagePage("Invite not found", "Double-check the link with whoever invited you."), 404);
+    const form = await c.req.parseBody();
+    const name = String(form.name ?? "").trim().replace(/\s+/g, " ").slice(0, 30);
+    const rawPhone = String(form.phone ?? "").trim();
+    const phone = normalizeHandle(rawPhone);
+    const again = (error: string) =>
+      c.html(joinPage({ code: group.joinCode, groupName: group.name, members: membersOf(ctx, group.id).map(nameOf), error, phone: rawPhone, name }), 422);
+    if (!name) return again("Add your first name.");
+    if (!/^\+[1-9]\d{9,14}$/.test(phone)) return again("Enter a full phone number, like (919) 555-1234.");
+
+    let user = getOrCreateUser(ctx, phone);
+    if (!user.displayName) user = updateUser(ctx, user.id, { displayName: name });
+    let line: string | undefined;
+    try {
+      line = await ensureMessagingAccess(ctx, user);
+    } catch (err) {
+      console.error("[join] messaging registration failed:", (err as Error).message);
+      return again(err instanceof PhotonRegistrationError ? err.message : "Couldn't set up texting right now. Try again in a minute.");
+    }
+    await joinGroup(ctx, getUser(ctx, user.id)!, group, user.displayName ? undefined : name);
+    return c.html(joinedPage({ groupName: group.name, line, code: group.joinCode }));
+  });
 
   // ---------------------------------------------------------------- pay page (signed link, no login)
   app.get("/p/:token", (c) => {

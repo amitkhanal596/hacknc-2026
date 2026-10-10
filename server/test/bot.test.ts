@@ -39,7 +39,7 @@ describe("Asheville trip, end to end over DMs", () => {
     const created = await bot.say("amit", "new trip Asheville");
     expect(created).toContain("Asheville Trip created!");
     code = created.match(/JOIN ([A-Z0-9]+)/)![1]!;
-    expect(created).toContain(`sms:+15555550100&body=JOIN%20${code}`);
+    expect(created).toContain(`Join our Asheville Trip tab 👉 http://localhost:3000/j/${code}`);
     expect(created).toContain("What should I call you?");
     expect(await bot.say("amit", "Amit")).toContain("Nice to meet you, Amit!");
 
@@ -85,6 +85,19 @@ describe("Asheville trip, end to end over DMs", () => {
     const logged = await bot.say("sam", "firewood");
     expect(logged).toContain("Firewood $30.00 · split 4 ways ($7.50 each) · ⚠️ no receipt");
     expect(bot.read("amit")).toContain("Sam logged Firewood $30.00 (⚠️ no receipt)");
+  });
+
+  it("asks for a reason even when the extractor (like Gemini) says 'pay me $20' isn't an expense", async () => {
+    const real = bot.ctx.extractor;
+    bot.ctx.extractor = {
+      ...real,
+      name: "gemini-like",
+      extractFromText: async () => ({ isExpense: false, hasReason: false, amountCents: 2000, participants: "all" }),
+      extractFromImage: real.extractFromImage,
+    };
+    expect(await bot.say("sam", "pay me $20")).toBe("What was the $20.00 for? A receipt photo helps.");
+    bot.ctx.extractor = real;
+    expect(await bot.say("sam", "gas")).toContain("Gas $20.00");
   });
 
   it("doesn't treat a much later message as the answer to 'what was it for?'", async () => {

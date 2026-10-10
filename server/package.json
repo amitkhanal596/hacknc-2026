@@ -13,7 +13,11 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "setup:devnet": "tsx scripts/setup-devnet.ts"
+    "setup:devnet": "tsx scripts/setup-devnet.ts",
+    "phone": "tsx scripts/phone.ts",
+    "check:photon": "tsx scripts/check-photon.ts",
+    "check:stripe": "tsx scripts/check-stripe.ts",
+    "photon:register": "tsx scripts/photon-register.ts"
   },
   "dependencies": {
     "@google/genai": "^2.28.0",

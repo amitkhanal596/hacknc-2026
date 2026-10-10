@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { eq } from "drizzle-orm";
 import type { Ctx } from "../context";
 import { authCodes } from "../db/schema";
+import { ensureMessagingAccess } from "../bot/join";
 import { sixDigitCode } from "../ids";
 import { normalizeHandle } from "../messaging/types";
 import { signToken, verifyToken } from "../payments/tokens";
@@ -26,6 +27,8 @@ export async function startLogin(ctx: Ctx, rawPhone: string): Promise<{ ok: bool
   const row = { phone, codeHash: hashCode(ctx, phone, code), expiresAt: ctx.now() + CODE_TTL_MS, attempts: 0 };
   ctx.db.insert(authCodes).values(row).onConflictDoUpdate({ target: authCodes.phone, set: row }).run();
   const user = getOrCreateUser(ctx, phone);
+  // Photon's shared line can only text registered numbers.
+  await ensureMessagingAccess(ctx, user);
   await ctx.messenger.send(user.phone, `Your Tab login code is ${code}. It expires in 10 minutes. Don't share it with anyone.`);
   return { ok: true, message: "Code sent." };
 }

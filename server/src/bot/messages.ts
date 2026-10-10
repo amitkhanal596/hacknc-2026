@@ -39,7 +39,7 @@ export function approvalText(pending: ShareDetail[], intro?: string): string {
     (d, i) =>
       `${i + 1}) ${d.expense.description} ${$(d.expense.totalCents)} · your share ${$(d.share.cents)} · from ${nameOf(d.payer)} (${flagBadges(d.expense.flags, d.expense.receiptTotalCents)})`,
   );
-  return `${prefix}You have ${pending.length} expenses waiting for your OK:\n${lines.join("\n")}\nReply YES ALL, YES 1 3, or DISPUTE 2 + reason.`;
+  return `${prefix}You have ${pending.length} expenses waiting for your OK:\n${lines.join("\n")}\nReply YES ALL, YES 1 ${pending.length}, or DISPUTE 2 + reason.`;
 }
 
 /** The settle-up DM for one debtor: who they owe and both ways to pay. Undefined if they owe nothing. */

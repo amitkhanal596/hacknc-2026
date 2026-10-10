@@ -6,6 +6,8 @@
  *   npm run sim -- --persist    keeps data in ./data/sim.db
  */
 import { serve } from "@hono/node-server";
+import { readFileSync } from "node:fs";
+import { extname } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { createApp } from "./api/app";
 import { FAKE_RECEIPT_MIME } from "./ai/types";
@@ -60,6 +62,7 @@ ${describeFeatures(config)}
 Type a message to send it to the bot as the current person.
   ${c.yellow}/as <name>${c.reset}                 switch who's texting (new names get a fake number)
   ${c.yellow}/receipt <amount> [merchant] [| caption]${c.reset}   send a fake receipt photo
+  ${c.yellow}/photo <file> [| caption]${c.reset}  send a real image (read by Gemini if configured)
   ${c.yellow}/jobs${c.reset}                      run reminders / auto-approve now
   ${c.yellow}/advance <minutes>${c.reset}         move the clock forward, then run jobs
   ${c.yellow}/who${c.reset}  ${c.yellow}/quit${c.reset}
@@ -96,6 +99,16 @@ while (true) {
         );
         await send(caption || null, [{ name: "receipt.jpg", mimeType: FAKE_RECEIPT_MIME, read: async () => body }]);
       }
+    } else if (cmd === "/photo") {
+      const [file, caption] = arg.split("|").map((s) => s.trim());
+      if (!file) console.log("Usage: /photo ~/Desktop/receipt.jpg | gas, everyone");
+      else {
+        const path = file.replace(/^~/, process.env.HOME ?? "~");
+        const data = readFileSync(path);
+        const ext = extname(path).toLowerCase();
+        const mimeType = ext === ".png" ? "image/png" : ext === ".heic" ? "image/heic" : "image/jpeg";
+        await send(caption || null, [{ name: path, mimeType, read: async () => data }]);
+      }
     } else if (cmd === "/jobs") {
       console.log(c.dim, await runJobs(ctx), c.reset);
     } else if (cmd === "/advance") {
@@ -107,7 +120,7 @@ while (true) {
         console.log(c.dim, await runJobs(ctx), c.reset);
       }
     } else if (cmd?.startsWith("/")) {
-      console.log("Unknown command. /as, /receipt, /jobs, /advance, /who, /quit");
+      console.log("Unknown command. /as, /receipt, /photo, /jobs, /advance, /who, /quit");
     } else {
       await send(line);
     }

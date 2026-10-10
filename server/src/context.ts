@@ -1,6 +1,7 @@
 import { createExtractor, type Extractor } from "./ai";
 import type { Config } from "./config";
 import { openDb, type DB } from "./db/client";
+import { registerPhotonUser } from "./messaging/photon-users";
 import type { Messenger } from "./messaging/types";
 import { SimulatedChain, SolanaChain, type Chain } from "./payments/solana/chain";
 import { StripeRail } from "./payments/stripe/rail";
@@ -13,6 +14,8 @@ export interface Ctx {
   extractor: Extractor;
   chain: Chain;
   stripe?: StripeRail;
+  /** Registers a phone with the messaging provider (Photon shared lines). Undefined when not needed. */
+  registerMessagingUser?: (phone: string, firstName?: string | null) => Promise<{ assignedPhoneNumber: string }>;
   now: () => number;
 }
 
@@ -28,6 +31,12 @@ export function createContext(config: Config, messenger: Messenger, overrides: P
         ? overrides.stripe
         : config.stripe
           ? new StripeRail({ ...config.stripe, publicBaseUrl: config.publicBaseUrl })
+          : undefined,
+    registerMessagingUser:
+      "registerMessagingUser" in overrides
+        ? overrides.registerMessagingUser
+        : config.photon
+          ? (phone, firstName) => registerPhotonUser(config.photon!, phone, firstName)
           : undefined,
     now: overrides.now ?? Date.now,
   };

@@ -38,9 +38,13 @@ export function splitSummary(totalCents: number, shareCents: number[]): string {
   return even ? `split ${n} ways (${$(base)} each)` : `split between ${n} people`;
 }
 
-export function joinInvite(group: Group, botHandle: string): string {
-  const body = encodeURIComponent(`JOIN ${group.joinCode}`);
-  return `Join our ${group.name} tab 👉 sms:${botHandle}&body=${body}\n(or text JOIN ${group.joinCode} to ${botHandle})`;
+/**
+ * The invite the organizer pastes into the real group chat. With Photon's shared
+ * line, each person texts a different number, so the invite is a web page that
+ * registers them and has the bot text them first.
+ */
+export function joinInvite(group: Group, config: { publicBaseUrl: string }): string {
+  return `Join our ${group.name} tab 👉 ${config.publicBaseUrl}/j/${group.joinCode}\n(Already texting Tab? Just send: JOIN ${group.joinCode})`;
 }
 
 export function listOf(names: string[]): string {
