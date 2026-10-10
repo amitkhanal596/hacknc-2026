@@ -1,4 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
+import sharp from "sharp";
 import type { Receipt } from "../ledger/split.js";
 import { heuristicAssign, heuristicIntent } from "./heuristic.js";
 import type { AI, Intent, InterpretContext, ItemAssignment } from "./types.js";
@@ -90,9 +91,10 @@ export class GeminiAI implements AI {
   }
 
   async readReceipt(image: { bytes: Buffer; mimeType: string }): Promise<Receipt | null> {
+    const { bytes, mimeType } = await shrinkForVision(image);
     const out = await this.json<Receipt & { is_receipt: boolean }>(
       [
-        { inlineData: { mimeType: image.mimeType, data: image.bytes.toString("base64") } },
+        { inlineData: { mimeType, data: bytes.toString("base64") } },
         {
           text:
             "Extract this receipt or bill. Amounts are integer cents (e.g. $12.50 -> 1250). " +
@@ -187,5 +189,19 @@ Return, for EVERY item number, the member names (exact spelling) who shared it. 
       console.warn("[gemini] assignItems failed:", (err as Error).message);
       return null;
     }
+  }
+}
+
+/**
+ * Phone photos are 3-12 MB; receipts read fine at ~1600px. Smaller uploads are faster
+ * and avoid timeouts. Also normalizes HEIC and fixes EXIF rotation.
+ */
+export async function shrinkForVision(image: { bytes: Buffer; mimeType: string }): Promise<{ bytes: Buffer; mimeType: string }> {
+  try {
+    const bytes = await sharp(image.bytes).rotate().resize({ width: 1600, height: 1600, fit: "inside", withoutEnlargement: true }).jpeg({ quality: 82 }).toBuffer();
+    return { bytes, mimeType: "image/jpeg" };
+  } catch (err) {
+    console.warn("[gemini] image resize failed, sending original:", (err as Error).message);
+    return image;
   }
 }
