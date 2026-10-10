@@ -4,7 +4,7 @@
 >
 > Built for **HackNC 2026** with **Photon Spectrum** (iMessage), **Google Gemini** (understanding messages and receipts), **Solana** (crypto payments), and **Stripe** (Apple Pay + payouts).
 >
-> Technical details are in [ARCHITECTURE.md](./ARCHITECTURE.md).
+> Technical details are in [ARCHITECTURE.md](./ARCHITECTURE.md). Build status is in [PROGRESS.md](./PROGRESS.md).
 
 ## Problem
 Group trips, roommates, dinners, and clubs all produce scattered costs. Someone books the Airbnb, someone else covers gas, receipts pile up, and nobody remembers who owes whom. Splitting apps need everyone to download an app and type every expense in by hand. People already live in iMessage, so tracking should happen there.
@@ -13,7 +13,7 @@ Group trips, roommates, dinners, and clubs all produce scattered costs. Someone 
 Each person texts **Tab** directly (1:1 iMessage). Behind the scenes, Tab groups people into a shared **group**, like "Tahoe Trip." It:
 1. **Collects.** Members text the bot receipt photos, screenshots, or "paid $80 for gas, split with everyone." Gemini pulls out the amount, payer, and who's included.
 2. **Confirms.** The bot DMs **each affected person** their share to approve. Nobody owes anything they didn't agree to.
-3. **Tracks.** It keeps the group ledger and simplifies debts to the fewest payments.
+3. **Tracks.** It keeps the group ledger: who owes whom, netted between each pair of people so every dollar traces back to a real expense.
 4. **Explains.** Anyone can text *"why do I owe this?"* and get the original message, the receipt, and the math.
 5. **Settles.** Each debtor gets a DM with two ways to pay: reply `PAY` (USDC from their Tab wallet on Solana) or tap a link to **pay with Apple Pay**.
 6. **Reminds.** It nudges people about unpaid balances and shares they haven't reviewed.
@@ -25,7 +25,7 @@ The **native iMessage extension** is how Tab appears in the *real* group chat. M
 |---|---|
 | Messaging | **Photon Spectrum cloud, 1:1 DMs only.** Our subscription doesn't include group chats, so the bot never sits in a group thread. Groups live on our server. |
 | Joining a group | The organizer texts "new trip Tahoe." The bot replies with a join code and a one-tap link (`sms:<bot>&body=JOIN TAHOE42`) to paste into the real group chat. Members text `JOIN TAHOE42`. |
-| Expense input | Members DM receipts, screenshots, or text. If someone is in several groups, the bot uses their **active group** or asks which one. |
+| Expense input | Members DM receipts, screenshots, or text. Expenses go to their **active group** (the one they last created, joined, or picked with `USE <name>`). Every confirmation names the group. |
 | Payments | **Two ways to pay, one ledger.** **Solana:** USDC from wallets the backend makes for each user (devnet). **Apple Pay:** Stripe (test mode) on our web pay page, with payouts to the creditor in **dollars via Stripe Connect**. |
 | Apple Pay placement | **Web** (Stripe Express Checkout on the pay page). No paid Apple Developer account needed. The extension's Pay button opens that page. |
 | Creditor payouts | Creditors who want card or Apple Pay payments connect Stripe once (onboarding link sent by DM). Money paid before they connect is **held** and transferred once they do. |
@@ -43,7 +43,7 @@ The **native iMessage extension** is how Tab appears in the *real* group chat. M
 4. **Approve / dispute:** each participant gets their own DM:
    > Amit logged **Gas $80.00** (🧾 receipt) for Tahoe Trip. Your share: **$20.00**. Reply YES, DISPUTE + reason, or WHY.
 5. **Why:** "why do I owe Amit $42?" returns the itemized breakdown with sources.
-6. **Settle up:** anyone texts `SETTLE` (or taps it in the extension). The bot works out the fewest payments and DMs each debtor:
+6. **Settle up:** anyone texts `SETTLE` (or taps it in the extension). The bot works out who owes whom and DMs each debtor:
    > You owe Amit $42.10 for Tahoe Trip. Reply **PAY** to send USDC from your Tab wallet, or **pay with Apple Pay**: tab.app/p/… · Reply WHY for the breakdown.
 7. **Pay:**
    - **Solana:** `PAY` sends tUSDC wallet-to-wallet with an explorer link.
@@ -101,9 +101,9 @@ Known limit: someone with a real receipt for something unrelated can still try i
 - **Bot in the group chat** if the Photon plan ever includes group chats.
 
 ## Verification
-- **Unit tests** (`bun test`):
+- **Unit tests** (`npm test` in `server/`):
   - Splits: cent rounding always adds up exactly.
-  - Settle: fewest transfers, and balances add to zero.
+  - Settle: debts net correctly in both directions, payments reduce them, and balances add to zero.
   - Approvals: someone else's approval is ignored, auto-approval only with a receipt, edits reset shares, disputed shares are left out.
   - Validation: amount-mismatch and duplicate flags.
   - Payments: amount cap, held Stripe transfer released after Connect onboarding.

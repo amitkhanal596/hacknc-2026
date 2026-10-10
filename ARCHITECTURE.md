@@ -1,6 +1,23 @@
 # Tab: Architecture
 
-The product overview, decisions, and timeline are in [PLAN.md](./PLAN.md). This doc covers how the system is built.
+The product overview, decisions, and timeline are in [PLAN.md](./PLAN.md). This doc covers how the system is built. Build status is in [PROGRESS.md](./PROGRESS.md), and how to run the server is in [server/README.md](./server/README.md).
+
+## As built (changes from the original design)
+
+The server is implemented and tested. Where it differs from the original design below, the code wins:
+
+| Topic | Original design | As built | Why |
+|---|---|---|---|
+| Runtime | Bun | **Node 22 + tsx**, tests with **vitest** | Node is already installed everywhere. Same TypeScript. |
+| Code layout | DB access mixed into ledger/bot | Pure logic in `ledger/`, database access in `store/`, one `Ctx` object passed everywhere | Ledger math is unit-tested without a database. Any piece (messenger, chain, Stripe, clock) can be swapped in tests. |
+| Who owes whom | Fewest-transfers simplification | **Pairwise debts** (Jake owes Amit for Amit's expenses only). `simplify()` exists for a future setting. | Simplification can make you pay someone you never shared a cost with, which breaks "why do I owe this?". |
+| WHY answers | Gemini writes them from records | **Deterministic template**, no LLM | Can't invent anything. Gemini is only used to *understand* messages and images. |
+| Stripe Connect | `accounts.create({type:"express"})`, `payouts_enabled` | **Accounts v2**: `v2.core.accounts.create` with `configuration.recipient` (`stripe_transfers`), `dashboard: "express"`, platform owns fees/losses. Ready when `stripe_transfers.status === "active"`. | v1 account types are deprecated. Readiness is re-checked from the webhook, the onboarding return page, and a sweep job. |
+| Jobs | node-cron, separate files | One `setInterval` loop in `jobs/index.ts`: auto-approve, reminders with backoff, held-payment sweep, stale Apple Pay expiry | Simpler. Demo mode shortens every interval. |
+| Prompts | One open prompt per user | One per user **per kind** (`approve`, `reason`, `name`, `fix`) | A payer's open "fix" prompt shouldn't be overwritten by an approval request. |
+| Leftover cents | Spread across the first participants | The **payer absorbs leftover cents**, so everyone else pays the same | "$26.66 each" instead of $26.67 / $26.66. |
+| No credentials | n/a | Every integration has a local stand-in: `MemoryMessenger`, regex extractor, `SimulatedChain`, Stripe off. `npm run sim` drives the real bot from a terminal. | The team can build and demo before Photon, Gemini, Stripe, and devnet keys exist. |
+| Not built yet | | Link-preview images (`/og`), daily digest, recurring bills, iOS extension | Tracked in PROGRESS.md. |
 
 **Two constraints shape the design:**
 1. **Photon Spectrum, 1:1 DMs only.** Our plan doesn't include group chats, so the bot never sits in a group thread. A "group" is a server-side record that members join by code, and every bot interaction is a direct message.
@@ -21,12 +38,12 @@ flowchart LR
         SP["iMessage provider (DMs)"]
     end
 
-    subgraph Server["Tab server (Bun + TypeScript)"]
+    subgraph Server["Tab server (Node 22 + TypeScript)"]
         BOT["Bot<br/>handler · groups · explain · fan-out"]
         LEDGER["Ledger<br/>splits · validate · approvals · settle"]
         AI["Gemini client"]
         PAYS["Payments<br/>router · solana · stripe"]
-        JOBS["Jobs (node-cron)<br/>reminders · auto-approve · digest · release-held"]
+        JOBS["Jobs (interval loop)<br/>reminders · auto-approve · release-held"]
         API["REST API (Hono)<br/>+ Stripe webhook"]
         DB[("SQLite<br/>Drizzle")]
     end
@@ -56,23 +73,25 @@ flowchart LR
 
 | Component | Location | Responsibility |
 |---|---|---|
-| Spectrum app | `server/src/index.ts` | Boots `Spectrum({ projectId, projectSecret, providers: [imessage.config()] })` and iterates `app.messages` (DMs only). |
-| Messaging wrapper | `server/src/messaging.ts` | The only module that imports `spectrum-ts`. Provides `sendDM(userId, text)`, `getAttachment`, `senderPhone`. Applies outbound rate limiting. |
-| Bot handler | `server/src/bot/handler.ts` | Routes each DM to a command (`NEW`, `JOIN`, `USE`, `SETTLE`, `PAY`, `WHY`, `YES`, `DISPUTE`), a reply to a pending approval, a possible expense, or help. |
-| Groups | `server/src/bot/groups.ts` | Create group, join codes, membership, each user's **active group**. |
-| Fan-out | `server/src/bot/notify.ts` | Sends one DM per affected member (approval requests, payment receipts, digests), batched per person. |
+| Entry points | `server/src/index.ts`, `server/src/sim.ts` | Real server (Spectrum + HTTP API + jobs) and the terminal simulator. |
+| Messaging | `server/src/messaging/*` | `Messenger` interface. `spectrum.ts` is the only module that imports `spectrum-ts` (boots `Spectrum({ projectId, projectSecret, providers: [imessage.config()] })`, flattens text + image attachments, ignores group chats). `memory.ts` backs tests and the simulator. |
+| Bot handler | `server/src/bot/handler.ts` + `commands.ts` | Routes each DM to a command (`NEW`, `JOIN`, `USE`, `SETTLE`, `PAY`, `WHY`, `YES`, `DISPUTE`, `FIX`, `WITHDRAW`, `PAYOUTS`), an open prompt (name, reason, fix), or expense capture. |
+| Store | `server/src/store/*` | Database access: users (+ wallets), groups (join codes, active group), expenses/shares/audit, payments, DM log + prompts. |
+| Fan-out | `server/src/bot/messages.ts`, `server/src/notify.ts` | One DM per affected member: batched approval requests (numbered for `YES 1 3`) and settle-up texts with both ways to pay. |
 | Explain | `server/src/bot/explain.ts` | Answers "why do I owe this?" from ledger records only. |
-| Gemini client | `server/src/ai/gemini.ts` | `extractFromText`, `extractFromImage` (receipts *and* chat screenshots), `explainShares`. |
-| Ledger | `server/src/ledger/*` | Pure logic: split math, validation flags, the share state machine, debt simplification. |
-| Payments router | `server/src/payments/index.ts` | Checks the amount against approved debt, picks the payment method, records `payments`, posts confirmations. |
+| Gemini client | `server/src/ai/gemini.ts` | `extractFromText`, `extractFromImage` (receipts *and* chat screenshots). Falls back to a regex extractor without a key or on errors. |
+| Ledger | `server/src/ledger/*` | Pure logic: split math, validation flags, the share state machine, pairwise debts. |
+| Payments | `server/src/payments/service.ts` | Caps every payment at approved debt minus in-flight payments, Solana pay, Apple Pay intents, Stripe webhook handling, held-funds release. Signed pay-link and API tokens in `tokens.ts`. |
 | Solana | `server/src/payments/solana/*` | Makes wallets, encrypts keys, funds new wallets, sends tUSDC transfers. |
-| Stripe | `server/src/payments/stripe/*` | PaymentIntents for Apple Pay, Connect Express onboarding, webhooks, held transfers. |
-| Jobs | `server/src/jobs/*` | Reminders, auto-approval, daily digest, releasing held Stripe transfers. |
-| REST API | `server/src/api/routes.ts` | Used by the extension and the pay page. Also receives the Stripe webhook. |
-| Web | `server/src/web/*` | Pay page (Apple Pay), link-preview image, Apple Pay domain-verification file. |
+| Stripe | `server/src/payments/stripe/rail.ts` | PaymentIntents for Apple Pay, Connect (Accounts v2) recipient onboarding, held-funds transfers, webhook parsing. |
+| Jobs | `server/src/jobs/index.ts` | Auto-approval, reminders with backoff, held-payment sweep, stale Apple Pay expiry. |
+| REST API | `server/src/api/app.ts`, `auth.ts` | Extension API (bearer token from a texted login code), pay page, Stripe webhook, Connect return/refresh. |
+| Web | `server/src/web/pages.ts` | Pay page (Express Checkout Element for Apple Pay + "pay with USDC") and status pages. Link-preview images are not built yet. |
 | iMessage extension | `ios/Tab/MessagesExtension` | In-group-chat UI: cards, balances, approvals, why, Pay, add expense. |
 
 ## Repo layout
+
+> The as-built server layout is in [server/README.md](./server/README.md#layout). The tree below is the original plan; the iOS part still applies.
 
 ```
 .
@@ -158,14 +177,14 @@ flowchart LR
 
 | Layer | Choice | Why |
 |---|---|---|
-| Runtime | Bun + TypeScript | Spectrum and Stripe both have TS SDKs. Built-in test runner. |
+| Runtime | Node 22 + TypeScript (tsx), vitest | Spectrum and Stripe both have TS SDKs. Nothing extra to install. |
 | Messaging | `spectrum-ts` (Photon cloud) | iMessage DMs without a Mac running all the time. |
-| HTTP | Hono | Tiny, runs on Bun, JSX for the pay and preview pages, raw body access for Stripe webhooks. |
-| DB | SQLite + Drizzle ORM | Zero setup, typed schema. |
+| HTTP | Hono (+ `@hono/node-server`) | Tiny, `html` templates for the pay page, raw body access for Stripe webhooks. |
+| DB | SQLite (better-sqlite3 v12) + Drizzle ORM | Zero setup, typed schema, migrations run on boot. |
 | AI | `@google/genai`, latest Gemini Flash | Multimodal (receipts + screenshots), structured output. |
 | Crypto payments | `@solana/web3.js`, `@solana/spl-token` | SPL token transfers on devnet. |
 | Card payments | `stripe` (Node), Stripe.js Express Checkout Element | Apple Pay on the web without an Apple Developer account. Connect handles payouts. |
-| Jobs | `node-cron` | Same process, simple. |
+| Jobs | `setInterval` loop | Same process, simple. |
 | iOS | Swift, SwiftUI, Messages framework | Native in-Messages UI. |
 | Hosting | Railway/Fly with a **stable HTTPS domain** | Apple Pay domain verification, Stripe webhooks, extension API. |
 
@@ -438,8 +457,8 @@ sequenceDiagram
 
 - **Apple Pay on the web:** the pay page uses Stripe.js **Express Checkout Element**, which shows the Apple Pay button in Safari when the device has a Wallet card. We register our domain as a payment method domain (`scripts/setup-stripe.ts`), and Stripe hosts the Apple verification file at `/.well-known/apple-developer-merchantid-domain-association`. **No Apple Developer account needed.** The domain must be stable HTTPS (deployed, not a changing ngrok URL).
 - **Test mode:** Apple Pay works with a real card in Wallet, and Stripe returns a test token, so nothing is charged.
-- **Creditor onboarding (Connect Express):** the first time someone is owed money, or when they text `PAYOUTS`, the bot DMs a Stripe Account Link. `account.updated` webhooks set `users.stripe_payouts_enabled`. In test mode, onboarding accepts test data.
-- **Held funds:** if the creditor wasn't onboarded at payment time, the charge stays on our platform account with status `held`. When `account.updated` reports payouts enabled, `jobs/releaseHeld.ts` creates `transfers.create({ amount, destination, source_transaction: chargeId, transfer_group })` and sets status `released`. Using `source_transaction` means we don't wait for the funds to clear.
+- **Creditor onboarding (Connect, Accounts v2):** when someone texts `PAYOUTS` (or is told their money is held), the bot creates a v2 recipient account (`dashboard: "express"`, `stripe_transfers` requested, platform as fees/losses collector) and DMs a v2 Account Link. `users.stripe_payouts_enabled` is set from `configuration.recipient.capabilities.stripe_balance.stripe_transfers.status === "active"`, re-checked on the account webhook, the `/connect/return` page, and the sweep job. In test mode, onboarding accepts test data.
+- **Held funds:** if the creditor wasn't onboarded at payment time, the charge stays on our platform account with status `held`. When the creditor becomes ready, `releaseHeldPayments` creates `transfers.create({ amount, destination, source_transaction: chargeId, transfer_group })` and sets status `released`. Using `source_transaction` means we don't wait for the funds to clear.
 - **Fees:** test mode has none to worry about. In production, the platform covers or passes on Stripe's fee, which is a product decision for later.
 - **Idempotency:** PaymentIntent and Transfer creation use idempotency keys based on the `payments.id`.
 
@@ -448,7 +467,7 @@ sequenceDiagram
 |---|---|
 | `payment_intent.succeeded` | Set the payment to `confirmed` (destination charge) or `held` (platform charge). Send DMs to both people. |
 | `payment_intent.payment_failed` | Set `failed`. DM the debtor to retry or reply PAY for USDC. |
-| `account.updated` | Update `stripe_payouts_enabled`. If now enabled, release held payments to that creditor. |
+| `account.updated` | Treated as a nudge: re-read v2 capability status. If the account just became ready, release held payments to that creditor. |
 | `transfer.created` | Set `released`, store `stripe_transfer_id`. DM the creditor. |
 
 Signatures are checked with `STRIPE_WEBHOOK_SECRET` on the raw request body.
@@ -458,7 +477,7 @@ Signatures are checked with `STRIPE_WEBHOOK_SECRET` on the raw request body.
 `bot/explain.ts`: the user texts "why do I owe Amit $42?" or "why", or taps an expense in the extension.
 1. Load the user's approved and pending shares toward that creditor (with expense, receipt, source DM, audit trail) and any payments already made.
 2. If there are no records: "You don't owe Amit anything right now."
-3. Otherwise `explainShares(records)` with a "cite only these records" instruction, e.g. *"$20 Gas ($80 ÷ 4), Amit's receipt from Oct 10, you approved Oct 10 · $22.10 Dinner…"*.
+3. Otherwise build the answer from a fixed template over those records (no LLM), e.g. *"$20.00 Gas ($80.00 ÷ 4) · Amit's receipt (Shell), Oct 10 · 🧾 receipt matched · you approved Oct 10"*.
 
 The extension shows the same data without an LLM, via `GET /expenses/:id`.
 
@@ -469,11 +488,16 @@ The extension shows the same data without an LLM, via `GET /expenses/:id`.
 | `autoApprove` | 1 min / 15 min | Approves pending shares past `auto_approve_at` (only when there's a receipt). DMs the owner. |
 | `reminders` (debt) | 2 min / 1 h | DMs debtors with approved, unpaid balances older than N, with backoff. Includes both payment options. |
 | `reminders` (review) | 2 min / 3 h | DMs users with pending shares, batched into one message. |
-| `digest` | off / daily | One DM per member per group: new expenses, their balance, who's settled. |
-| `releaseHeld` | on `account.updated` + 5 min sweep | Transfers held Apple Pay funds to newly onboarded creditors. |
+| `digest` (not built) | off / daily | One DM per member per group: new expenses, their balance, who's settled. |
+| `sweepHeldPayments` | every tick | Re-checks creditors with held money and releases it once their Connect account is ready (backup for the webhook). |
+| `expireStalePayments` | every tick | Apple Pay attempts still pending after 30 min are marked failed so they stop blocking the debt. |
 | `recurring` (stretch) | cron per bill | Creates recurring expenses, which go through the normal approvals. |
 
-## Debt simplification (`ledger/settle.ts`)
+## Debts (`ledger/settle.ts`)
+
+**As built, settle-up uses `pairwiseDebts`:** for each pair of people, approved shares in both directions are netted, then settled payments are subtracted. Every dollar traces back to that person's expenses. The greedy simplification below is implemented and tested (`simplify()`) but not used by default.
+
+### Fewest-transfers simplification (optional)
 
 1. Compute each member's net, using approved shares only. Payments with status `confirmed`, `held`, or `released` count against what's owed, since a held payment is already paid as far as the debtor is concerned.
 2. Split into creditors and debtors, sorted by size. Greedily match the largest debtor to the largest creditor, transfer `min(|d|, c)`, and repeat. That gives at most `n − 1` transfers.
@@ -489,7 +513,6 @@ All calls use `responseMimeType: "application/json"` and a `responseSchema` from
 |---|---|---|
 | `extractFromText` | DM text, sender's last ~20 DMs, members `[{id, name}]`, sender id | `{ is_expense, has_reason, reason, amount_cents, payer_id, participant_ids[], split_type, custom_shares?, group_hint? }` |
 | `extractFromImage` | image bytes + mime, members | `{ kind: receipt\|chat_screenshot\|other, merchant?, date?, items[]?, subtotal_cents?, tax_cents?, tip_cents?, total_cents?, claimed_text?, payer_hint?, confidence }` |
-| `explainShares` | records for one user/creditor | `{ text }`, built only from the given records |
 
 - Gemini returns **member IDs**, never names to be trusted directly.
 - Low confidence or missing fields: ask a clarifying question instead of guessing.
@@ -527,49 +550,55 @@ flowchart TD
 - **Apple Pay:** opens the web pay page (no Apple Developer account, so no PassKit entitlement). Native PassKit is a stretch goal.
 - **Distribution:** installed on demo phones from Xcode with free provisioning.
 
-## REST API (`api/routes.ts`)
+## REST API (`server/src/api/app.ts`)
 
-Bearer token required except for `/auth/*`, `/p/*`, `/og/*`, `/pay/apple-pay/intent` (signed pay token), and `/stripe/webhook` (Stripe signature).
+Routes under `/api` need `Authorization: Bearer <token>` (from the login flow). The pay page is authorized by its signed link token, the webhook by Stripe's signature.
 
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/auth/start` | `{phone}` → DM a 6-digit code |
-| POST | `/auth/verify` | `{phone, code}` → `{token}` |
-| GET | `/groups` | Caller's groups |
-| POST | `/groups` | Create a group (same as the `NEW` DM command) → `{join_code, invite_text}` |
-| GET | `/groups/:id` | Expenses (with flags), caller's balances, settle plan, payment status |
-| POST | `/groups/:id/expenses` | Create from `{text}` or a multipart image (same pipeline as DMs) |
-| GET | `/expenses/:id` | Detail, receipt, shares, audit trail |
-| POST | `/shares/:id/approve` | **Caller must own the share** |
-| POST | `/shares/:id/dispute` | `{reason}`. **Caller must own the share** |
-| GET | `/me/explain?creditor=` | Breakdown of what the caller owes that person |
-| POST | `/pay/solana` | `{group_id, to_user_id, cents}` → `{tx_sig, explorer_url}` |
-| POST | `/pay/link` | `{group_id, to_user_id}` → signed Apple Pay link (used by the extension) |
-| GET | `/p/:token` | Pay page: breakdown + Apple Pay button + "pay with USDC instead" |
-| POST | `/pay/apple-pay/intent` | `{token}` → `{client_secret}` |
-| POST | `/connect/onboard` | → Stripe Account Link URL for the caller |
-| GET | `/connect/return` | Onboarding return page |
-| POST | `/stripe/webhook` | Stripe events |
-| GET | `/og/:kind/:id.png` | Link-preview / card images |
+| POST | `/auth/start` | `{phone}` → the bot texts a 6-digit code (hashed, 10-min expiry, 30s resend limit) |
+| POST | `/auth/verify` | `{phone, code}` → `{token, user}` (5 attempts per code) |
+| GET | `/api/me` | Caller + number of shares waiting on their OK |
+| GET | `/api/groups` | Caller's groups |
+| POST | `/api/groups` | `{name, kind?}` → group + invite text |
+| GET | `/api/groups/:id` | Expenses (badges, my share), debts, what I owe / am owed, my pending shares, payments |
+| POST | `/api/groups/:id/expenses` | `{text}` or multipart `image` (+ `text`). Same pipeline as texting the bot; the confirmation arrives by DM. |
+| GET | `/api/expenses/:id` | Expense, receipt info, shares, audit trail (group members only) |
+| POST | `/api/shares/:id/approve` | **403 unless the caller owns the share** |
+| POST | `/api/shares/:id/dispute` | `{reason}`. **403 unless the caller owns the share.** Disputes exactly that share. |
+| GET | `/api/explain?groupId=&creditor=` | The WHY text |
+| POST | `/api/pay/solana` | `{groupId, toUserId, cents?}` → payment + explorer URL |
+| POST | `/api/pay/link` | `{groupId, toUserId}` → signed Apple Pay link (the extension opens it) |
+| POST | `/api/connect/onboard` | → Stripe Connect onboarding URL |
+| GET | `/p/:token` | Pay page: breakdown, Apple Pay button, "pay with USDC instead" |
+| POST | `/p/:token/intent` | Creates the PaymentIntent (re-checks the cap) → `{clientSecret}` |
+| POST | `/p/:token/usdc` | Pays the same debt in USDC instead |
+| POST | `/stripe/webhook` | Stripe events (signature-verified) |
+| GET | `/connect/return`, `/connect/refresh` | Onboarding return (re-checks readiness, releases held money) and expired-link refresh |
+| GET | `/health` | Liveness |
 
 ## Configuration (`server/.env.example`)
 
+Every key is optional. Missing ones turn that feature off and fall back to a local stand-in (see [server/README.md](./server/README.md#running-for-real)).
+
 ```
-PHOTON_PROJECT_ID=
-PHOTON_PROJECT_SECRET=
+PORT=3000
+PUBLIC_BASE_URL=            # stable HTTPS domain (registered for Apple Pay); used in pay links
+DATABASE_PATH=./data/tab.db
+DEMO_MODE=true              # shortens auto-approve, reminders, job ticks
+
+PHOTON_PROJECT_ID=  PHOTON_PROJECT_SECRET=
 BOT_HANDLE=                 # bot's iMessage phone/email, used in sms: join links
-GEMINI_API_KEY=
+
+GEMINI_API_KEY=  GEMINI_MODEL=gemini-2.5-flash
+
 SOLANA_RPC_URL=https://api.devnet.solana.com
-TREASURY_SECRET_KEY=        # base58, from scripts/setup-devnet.ts
-USDC_MINT=                  # tUSDC mint, from setup script
-WALLET_ENC_KEY=             # 32-byte hex, AES-256-GCM
-STRIPE_SECRET_KEY=sk_test_...
-STRIPE_PUBLISHABLE_KEY=pk_test_...
-STRIPE_WEBHOOK_SECRET=whsec_...
-PAY_LINK_SECRET=            # HMAC key for pay-link tokens
-PUBLIC_BASE_URL=            # stable HTTPS domain (registered for Apple Pay)
-DATABASE_URL=file:./tab.db
-DEMO_MODE=true              # shortens job schedules and timeouts
+TREASURY_SECRET_KEY=  USDC_MINT=   # from npm run setup:devnet
+WALLET_ENC_KEY=             # 64 hex chars, AES-256-GCM for wallet secrets
+
+STRIPE_SECRET_KEY=  STRIPE_PUBLISHABLE_KEY=  STRIPE_WEBHOOK_SECRET=
+
+APP_SECRET=                 # signs pay links and API tokens
 ```
 
 ## Security notes (hackathon scope)
@@ -581,7 +610,7 @@ DEMO_MODE=true              # shortens job schedules and timeouts
   - A payment is marked paid **only** from webhooks.
   - Idempotency keys on PaymentIntents and Transfers.
   - Amounts are checked again on the server against approved debt.
-- **Pay links** are HMAC-signed, expire (24h), are tied to one debtor and creditor, and are capped at the debt at creation time. The cap is checked again when the PaymentIntent is created.
+- **Pay links** are HMAC-signed with `APP_SECRET`, expire (24h), and are tied to one debtor and creditor. The amount is re-read from the ledger when the page loads and again when the PaymentIntent is created, minus any payment still in flight.
 - **DM commands** (`PAY`, `YES`, `DISPUTE`) are tied to the sender's phone number from Spectrum. Bare replies are resolved through `pending_prompts` with expiry, so an old "YES" can't approve something new.
 - **Auth codes** are hashed, expire in 10 minutes, and are rate-limited per phone.
 - **Ownership checks** on approvals and disputes happen in both the ledger and the API.
