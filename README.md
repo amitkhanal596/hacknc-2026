@@ -1,60 +1,86 @@
-# Velo 💸
+# Tab 💸
 
 **The friend on your trip who handles the money, over iMessage.**
 
-Velo is an AI agent with a real phone number that everyone on a trip texts over iMessage. Text Velo what you paid, as plain text or as a photo of the receipt. Velo asks who to split it with, then privately tells each friend their share. It reminds people who forget, and settles up on **Solana** when someone texts "pay". There's no app to install and no spreadsheet.
+Tab is an AI agent with a real phone number. Friends on a trip text it receipts and expenses. Tab splits them, asks each person to OK their share, explains any number on request, nudges people who forget, and settles up in USDC on **Solana** when someone texts PAY. There's no app to install, no spreadsheet, and no crypto in sight.
 
 Built at HackNC 2026 for the **Best iMessage Agent with Photon** and **Solana** tracks.
 
-## What it does
-
-- **Log expenses in plain English:** "I paid 120 for gas, split 4 ways" or "Airbnb was 640, everyone but Sam".
-- **Read receipts:** snap a photo and Velo lists the items, then asks "who had what?". Tax and tip are split in proportion to what each person ordered.
-- **Trips:** "start trip Asheville with Sam, Jo, Ryan" invites friends. Each one replies JOIN.
-- **Shares to everyone involved:** every logged expense is sent as a personal DM to each person in it ("Your share: $27.15").
-- **Show who owes whom:** text "settle" and each person gets the fewest payments needed to clear everyone's debts.
-- **Send polite reminders:** Velo privately texts anyone who hasn't paid yet.
-- **Pay over iMessage:** reply PAY, then YES. Velo sends the money on Solana devnet and texts both people the transaction link.
-- **Trip page:** a read-only web page showing the whole trip: every expense, balance and on-chain transaction.
-
-## How it works
+## How it feels
 
 ```
-Each friend ⇄ 1:1 iMessage ⇄ Photon Spectrum → Velo service (TypeScript)
-                                              ├─ Gemini: reads receipts, understands messages
-                                              ├─ Ledger: integer-cent split & settle math (SQLite)
-                                              └─ Solana devnet: per-member wallets, vUSD transfers
+Amit:  new trip Asheville
+Tab:   Asheville Trip created! Paste this in your group chat:
+       "Join our Asheville tab 👉 https://…/j/ASHE42"
+
+Amit:  [receipt photo] gas, everyone
+Tab:   Logged to Asheville Trip: Gas $80.00 · split 4 ways ($20 each) · 🧾 receipt matched.
+       I've asked Jake, Priya, and Sam to OK their shares.
+
+Jake:  why do I owe so much
+Tab:   You owe $59.50 total:
+       • $20.00 to Amit: Gas ($80 ÷ 4), receipt Oct 11, you approved
+       • $32.00 to Priya: Dinner ($96 ÷ 3), receipt Oct 11, you approved
+       • $7.50 to Sam: Firewood ($30 ÷ 4), receipt added Oct 12, still waiting on your OK
+
+Jake:  PAY
+Tab:   ✅ Sent $52.00 USDC: Priya $32, Amit $20 · view on Solana
 ```
+
+**Features**
+- **Receipts:** split evenly, by who was there ("me, Jake and Sam"), or by item ("1,3 Sam; 2 Jake; rest everyone").
+- **Approvals:** YES, DISPUTE + reason, or WHY. Receipt-backed shares auto-approve after a grace period; no-receipt shares never do.
+- **Settling:** SETTLE finds the fewest payments, and PAY sends USDC from your Tab wallet.
+- **Reminders:** Tab nudges people about approvals waiting on them and about unpaid debts.
+- **Trip page:** a read-only page with balances, every expense, and on-chain payment links.
+
+## Stack
 
 | Layer | Tech |
 |---|---|
-| Messaging | Photon Spectrum (`spectrum-ts`, cloud iMessage) |
-| AI | Google Gemini (vision + function calling) |
-| Payments | Solana devnet, `@solana/web3.js`, `@solana/spl-token` (test token "vUSD") |
-| Backend | TypeScript (Bun/Node), SQLite, node-cron, Hono |
+| Messaging | Photon Spectrum (`spectrum-ts`, cloud iMessage, Pro shared pool) |
+| AI | Google Gemini (receipt vision + message understanding), with keyword fallback |
+| Payments | Solana devnet, `@solana/web3.js` + `@solana/spl-token`, 6-decimal test USDC |
+| Backend | TypeScript on Node 20, SQLite (`better-sqlite3`), Hono |
 
-Full design and trade-offs: [`docs/adr/0001-velo-architecture.md`](docs/adr/0001-velo-architecture.md).
+Design and trade-offs: [`docs/adr/0001-velo-architecture.md`](docs/adr/0001-velo-architecture.md).
 
-> ℹ️ On Spectrum Pro, Velo works through 1:1 chats (a "virtual group"). With a dedicated Photon line, the same logic runs inside a real iMessage group chat.
+> ⚠️ **Demo only.** Tab holds an encrypted devnet wallet for each person so paying takes one tap. A production version would use embedded/MPC wallets and real USDC.
 
-> ⚠️ **Demo only.** Velo holds a devnet wallet for each member so payments take one tap. A production version would use embedded/MPC wallets so Velo never holds a raw private key.
+## Run it
 
-## Running locally
-
-_Coming soon, once the service is scaffolded._ Required environment variables:
-
-```
-SPECTRUM_PROJECT_ID=
-SPECTRUM_PROJECT_SECRET=
-GEMINI_API_KEY=
-SOLANA_RPC_URL=https://api.devnet.solana.com
-VELO_TREASURY_SECRET=    # base58 secret of the fee-payer / mint authority wallet
-VELO_MASTER_KEY=         # 32-byte hex key used to encrypt member wallets
-DEMO_MODE=1              # fast reminder schedule for demos
+```bash
+npm install
+cp .env.example .env
+npm test          # money math + the full Asheville story end to end
+npm run dev       # starts the local simulator + web server on :3000
 ```
 
-## Team
+**Simulator.** With `MESSENGER=sim` you play every person from one terminal:
 
-- **A:** messaging & agent loop
-- **B:** AI (receipts + intent)
-- **C:** ledger, Solana & ledger page
+```
+> amit: new trip Asheville
+> amit: Amit
+> jake: JOIN ASHE42          (use the code Tab printed)
+> jake: Jake
+> amit: paid $80 for gas, everyone
+> jake: YES
+> amit: [img samples/receipt.jpg] dinner, by item
+> jake: SETTLE
+> jake: PAY
+```
+
+The trip page is at `http://localhost:3000/t/<CODE>`.
+
+**Real iMessage.**
+1. Set `MESSENGER=spectrum` and add `SPECTRUM_PROJECT_ID` / `SPECTRUM_PROJECT_SECRET` from the Photon dashboard.
+2. Expose the server (for example `ngrok http 3000`) and set `PUBLIC_URL` so phones can open the invite and trip links.
+3. Register the organizer's phone with `npm run register -- +19195550101`. Friends are registered automatically when they use the invite link.
+
+**Real Solana (devnet).** Run `npm run solana:setup`, paste the printed values into `.env`, and set `SOLANA_MODE=devnet`.
+
+**Receipts.** Set `GEMINI_API_KEY`, then check accuracy on real photos with `npm run receipt:eval -- samples/*.jpg`.
+
+## Commands Tab understands
+
+`new trip <name>` · `JOIN <code>` · receipt photos · "paid $X for Y" · `YES` · `DISPUTE <reason>` · `WHY` · `BALANCE` · `SETTLE` · `PAY` · `UNDO` · `LINK` · `HELP`
