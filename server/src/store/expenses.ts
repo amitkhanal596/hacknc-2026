@@ -239,6 +239,17 @@ export function latestExpenseBy(ctx: Ctx, payerId: string, groupId: string): Exp
     .get();
 }
 
+/** The payer's most recent active expense across these groups. */
+export function latestExpenseIn(ctx: Ctx, payerId: string, groupIds: string[]): Expense | undefined {
+  if (groupIds.length === 0) return undefined;
+  return ctx.db
+    .select()
+    .from(expenses)
+    .where(and(eq(expenses.payerId, payerId), inArray(expenses.groupId, groupIds), eq(expenses.status, "active")))
+    .orderBy(desc(expenses.createdAt), desc(sql`${expenses}.rowid`))
+    .get();
+}
+
 /** Has anything in the group changed (expense logged/edited/flagged, payment made) since this time? */
 export function groupChangedSince(ctx: Ctx, groupId: string, since: number): boolean {
   const edited = ctx.db

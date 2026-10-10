@@ -15,10 +15,19 @@ export function getGroupByCode(ctx: Ctx, code: string): Group | undefined {
 export function createGroup(ctx: Ctx, organizer: User, name: string, kind: Group["kind"] = "trip"): Group {
   let joinCode = newJoinCode(name);
   while (getGroupByCode(ctx, joinCode)) joinCode = newJoinCode(name);
-  const group: Group = { id: newId("grp"), name, kind, joinCode, organizerId: organizer.id, settleRequestedAt: null, createdAt: ctx.now() };
+  const group: Group = { id: newId("grp"), name, kind, joinCode, organizerId: organizer.id, settleRequestedAt: null, closedAt: null, createdAt: ctx.now() };
   ctx.db.insert(groups).values(group).run();
   addMember(ctx, group.id, organizer.id);
   return group;
+}
+
+/** The trips this person is in that haven't been ended, oldest first. */
+export function openGroupsOf(ctx: Ctx, userId: string): Group[] {
+  return groupsOf(ctx, userId).filter((g) => !g.closedAt);
+}
+
+export function closeGroup(ctx: Ctx, groupId: string) {
+  ctx.db.update(groups).set({ closedAt: ctx.now() }).where(eq(groups.id, groupId)).run();
 }
 
 export function markSettleRequested(ctx: Ctx, groupId: string) {
@@ -60,7 +69,7 @@ export function groupsOf(ctx: Ctx, userId: string): Group[] {
     .select()
     .from(groups)
     .where(inArray(groups.id, ids.map((r) => r.id)))
-    .orderBy(asc(groups.createdAt))
+    .orderBy(asc(groups.createdAt), asc(sql`${groups}.rowid`))
     .all();
 }
 

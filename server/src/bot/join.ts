@@ -4,7 +4,8 @@ import { ASK_NAME, listOf } from "../copy";
 import type { Group, User } from "../db/schema";
 import { dm } from "../notify";
 import { setPrompt } from "../store/dms";
-import { addMember, membersOf } from "../store/groups";
+import { addMember, membersOf, openGroupsOf } from "../store/groups";
+import { tripTag } from "./trips";
 import { ensureWallet, getUser, nameOf, updateUser } from "../store/users";
 
 /**
@@ -39,6 +40,11 @@ export async function joinGroup(ctx: Ctx, userIn: User, group: Group, name?: str
     user.id,
     `You're in ${group.name}${others.length ? ` with ${listOf(others)}` : ""}! Text me receipts or "paid $X for Y" and I'll keep a running tab. I'll text you whenever something's logged, and nobody pays until someone texts SETTLE.`,
   );
+  const open = openGroupsOf(ctx, user.id);
+  if (open.length > 1) {
+    const tag = (g: Group) => `#${tripTag(g)}`;
+    await dm(ctx, user.id, `You're in ${open.length} trips now, so add the trip when you text me (like "paid $40 for gas ${tag(group)}"), or I'll ask which one.`);
+  }
   if (user.displayName) {
     await announceJoin(ctx, user.id, group);
   } else {

@@ -15,7 +15,7 @@ const envSchema = z.object({
   BOT_HANDLE: z.string().default("+15555550100"),
 
   GEMINI_API_KEY: optional,
-  GEMINI_MODEL: z.preprocess((v) => (typeof v === "string" && v.trim() === "" ? undefined : v), z.string().default("gemini-3.8-flash,gemini-3.5-flash,gemini-2.5-flash,gemini-2.5-flash-lite")),
+  GEMINI_MODEL: z.preprocess((v) => (typeof v === "string" && v.trim() === "" ? undefined : v), z.string().default("gemini-2.5-flash-lite,gemini-3.6-flash,gemini-3.8-flash,gemini-2.5-flash")),
 
   SOLANA_RPC_URL: z.string().default("https://api.devnet.solana.com"),
   TREASURY_SECRET_KEY: optional,

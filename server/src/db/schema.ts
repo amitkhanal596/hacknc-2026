@@ -25,6 +25,21 @@ export const groups = sqliteTable("groups", {
   organizerId: text("organizer_id").notNull(),
   /** When someone last texted SETTLE. Tab only nudges people to pay after this. */
   settleRequestedAt: integer("settle_requested_at"),
+  /** Set by END TRIP. Closed trips take no new expenses and don't count as "open". */
+  closedAt: integer("closed_at"),
+  createdAt: integer("created_at").notNull(),
+});
+
+/**
+ * A message waiting on "which trip is this for?". Kept (with its photo) so it
+ * can be processed once the person picks a trip. One per person.
+ */
+export const pendingMessages = sqliteTable("pending_messages", {
+  userId: text("user_id").primaryKey(),
+  text: text("text"),
+  imageData: blob("image_data", { mode: "buffer" }),
+  imageMime: text("image_mime"),
+  imageName: text("image_name"),
   createdAt: integer("created_at").notNull(),
 });
 
@@ -174,6 +189,10 @@ export type PendingPrompt =
   | { kind: "reason"; groupId: string; amountCents: number; participants: "all" | string[]; sourceText: string | null }
   /** We asked "what should I call you?". Once answered, tell this group they joined. */
   | { kind: "name"; announceGroupId?: string }
+  /** We asked "which trip is this for?": a number or trip name picks one, then the saved message/command runs. */
+  | { kind: "choose_trip"; groupIds: string[]; action: { type: "message" } | { type: "command"; text: string } }
+  /** Organizer asked to END TRIP with money still owed; a second END TRIP confirms. */
+  | { kind: "end_trip"; groupId: string }
   /** Someone disputed this payer's expense; FIX / WITHDRAW / a receipt photo apply to it. */
   | { kind: "fix"; expenseId: string; suggestedCents?: number; suggestedBy?: string };
 

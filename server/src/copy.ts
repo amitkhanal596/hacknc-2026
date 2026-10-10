@@ -13,7 +13,8 @@ export const HELP = `Here's what I can do:
 • WHY: the breakdown behind what you owe
 • SETTLE: done? Sends everyone their final total
 • PAY: pay what you owe in USDC
-• USE <group>: switch groups · GROUPS: list them
+• In more than one trip? Add it to your text (like "#asheville"), or I'll ask
+• GROUPS: list your trips · END TRIP: close a finished trip
 • NAME <your name>: change what I call you`;
 
 export const WELCOME_NO_GROUP = `Hi! I'm Tab. I keep track of shared costs for trips, roommates, and dinners.

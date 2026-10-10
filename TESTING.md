@@ -27,7 +27,7 @@ Installed on your Mac: **Stripe CLI** 1.53.1, **cloudflared** (the HTTPS tunnel)
 
 | Test | Result |
 |---|---|
-| `npm test`: ledger math, the full Asheville scenario over DMs, extension API, jobs, Apple Pay flow (fake Stripe), join page, Photon registration, receipt-photo forwarding, image rejection, Gemini model fallback, home page, dispute fixes, running tab, tab summary + card, paying for someone, fixing who | ✅ **93 / 93** |
+| `npm test`: ledger math, the full Asheville scenario over DMs, extension API, jobs, Apple Pay flow (fake Stripe), join page, Photon registration, receipt-photo forwarding, image rejection, Gemini model fallback, home page, dispute fixes, running tab, tab summary + card, paying for someone, fixing who, multiple trips, Gemini savings | ✅ **109 / 109** |
 | Simulator with **real Gemini**: receipt photo → expense, "dinner was 96, split with jake" → 2-way split, "pay me $20" → asks why, approvals, WHY, settle-up with Apple Pay links | ✅ |
 | `npm run check:stripe`: real PaymentIntent → test card → webhook → payment recorded | ✅ |
 | `npm run phone`: public HTTPS tunnel, Stripe registered the domain with **Apple Pay: active**, server reachable from the internet | ✅ |
@@ -198,7 +198,11 @@ Tested live: a drawn landscape came back "other" (rejected). A meme with "$50" i
 
 Your key is on Google's **free tier: 20 requests per day per model**. During testing, `gemini-2.5-flash` ran out, and newer models sometimes return **503 "high demand"**. So the bot tries models in order (`GEMINI_MODEL` in `.env`):
 
-`gemini-3.8-flash → gemini-3.5-flash → gemini-2.5-flash → gemini-2.5-flash-lite`
+`gemini-2.5-flash-lite → gemini-3.6-flash → gemini-3.8-flash → gemini-2.5-flash`
+
+Flash Lite goes first because it has the most free-tier room (10 requests/minute vs 5), and it reads receipts fine (tested: $80.00 Shell in 1.2s).
+
+**Gemini is skipped when it isn't needed.** Simple texts ("paid $80 for gas", "$45 groceries split with jake", "covered Jake's dinner $20") go through the built-in parser, and messages with no amount ("lol see you tomorrow") never reach Gemini. Only photos and tricky texts ("30 for gas and 20 for snacks", "I paid half") use it.
 
 - Each model has its **own** daily quota, so that's roughly 80 photos/texts a day.
 - A model that's busy is skipped for 1 minute. One that's out of quota is skipped for 15 minutes.
@@ -212,7 +216,7 @@ Text messages fall back to the built-in parser if every model fails. Photos can'
 
 | Command | What it does |
 |---|---|
-| `npm test` | All 93 tests (no network) |
+| `npm test` | All 109 tests (no network) |
 | `npm run sim` | Text the bot from your terminal as different people |
 | `npm run phone` | Tunnel + Stripe domain + webhooks + server, for iPhone testing and demos. The public URL's home page is the signup site. |
 | `npm run preview:site` | Preview the home page, tab page, and iMessage card with fake data (http://localhost:3994: `/`, `/started`, `/error`, `/tab`, `/tab-owe`, `/t/preview/card.png`) |

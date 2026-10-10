@@ -18,6 +18,7 @@ export type Command =
   | { type: "fix"; cents: number }
   | { type: "withdraw" }
   | { type: "accept" }
+  | { type: "end_trip" }
   | { type: "payouts" };
 
 const KIND_WORDS: Record<string, Group["kind"]> = {
@@ -33,7 +34,11 @@ const KIND_WORDS: Record<string, Group["kind"]> = {
 };
 
 function titleCase(s: string) {
-  return s.replace(/\s+/g, " ").trim().replace(/\b([a-z])/g, (m) => m.toUpperCase());
+  return s
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b([a-z])/g, (m) => m.toUpperCase())
+    .replace(/\b(\d+)([a-z]{1,2})\b/g, (_, n: string, l: string) => n + l.toUpperCase()); // "4b" -> "4B"
 }
 
 export function groupNameFor(raw: string, kind: Group["kind"]): string {
@@ -64,14 +69,19 @@ export function parseCommand(input: string): Command | undefined {
   if ((m = text.match(/^(?:use|switch(?:\s+to)?)\s+(.+)$/i))) return { type: "use", query: m[1]!.trim() };
   if (/^(groups|my groups|trips|list)$/i.test(text)) return { type: "groups" };
   if ((m = text.match(/^(?:name|call me|my name is)\s+([a-z][a-z .'-]{0,30})$/i))) return { type: "name", name: titleCase(m[1]!) };
-  if (/^(balance|balances|bal|status|what do i owe\??|how much do i owe\??)$/i.test(text)) return { type: "balance" };
+  if (/^(?:balance|balances|bal|status|what do i owe|how much do i owe)\b[^$\d]*$/i.test(text)) return { type: "balance" };
+  if (/^(?:end|close|finish)\s+(?:the\s+|this\s+|our\s+)?(?:trip|tab|group)\b.*$/i.test(text) || /^(?:end|close)\s+#?[a-z][\w-]*$/i.test(text)) {
+    return { type: "end_trip" };
+  }
+  // "summary asheville", "my tab for the apartment", "what are my expenses #asheville"
+  if (/^(?:summary|recap|my tab|my expenses|what are my expenses)\b[^$\d]*$/i.test(text)) return { type: "summary" };
   // "hey what are my expenses", "summary", "my tab", "show me my tab", "recap", "where do I stand?"
   if (
     /^(?:(?:hey|hi|yo|ok|so)[,!]?\s+)?(?:summary|recap|tab|my tab|expenses|my expenses|(?:what(?:'s| is| are)|show(?: me)?|send(?: me)?|can i see)\s+(?:my|the)\s+(?:expenses|tab|summary|total|running total)|where do i stand|how am i doing)\s*(?:today|so far)?[?.!]*$/i.test(text)
   ) {
     return { type: "summary" };
   }
-  if (/^settle(\s+up)?!?$/i.test(text)) return { type: "settle" };
+  if (/^settle(?:\s+up)?(?:\s+[^$\d]+)?!?$/i.test(text)) return { type: "settle" };
 
   // "PAY" or "PAY Amit". "pay me $20" is NOT a command: it falls through to the
   // expense path, which asks what the money was for.

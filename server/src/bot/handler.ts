@@ -17,7 +17,7 @@ import {
   createExpense,
   disputedExpensesOf,
   groupChangedSince,
-  latestExpenseBy,
+  latestExpenseIn,
   pendingSharesFor,
   receiptHistory,
   reviseExpense,
@@ -27,11 +27,14 @@ import {
   withdrawExpense,
   type ShareDetail,
 } from "../store/expenses";
-import { activeGroup, createGroup, findUserGroup, getGroup, getGroupByCode, groupsOf, isMember, markSettleRequested, membersOf } from "../store/groups";
+import { closeGroup, createGroup, getGroup, getGroupByCode, groupsOf, isMember, markSettleRequested, membersOf, openGroupsOf } from "../store/groups";
 import { getReceiptImage, receiptFileName, saveReceiptImage } from "../store/receipts";
 import { ensureWallet, getOrCreateUser, getUser, nameOf, updateUser } from "../store/users";
 import { looksLikeName, parseCommand, parseFixReply, parseWhoFix, sameDescription, suggestedAmount, type Command } from "./commands";
 import { explain } from "./explain";
+import { findTripMention, parseTripChoice, tripMenu, tripTag } from "./trips";
+import { savePendingMessage, takePendingMessage } from "../store/pending";
+import { findAmount, findReason } from "../ai/heuristic";
 import { buildSummary, summaryText } from "./summary";
 import { announceJoin, joinGroup } from "./join";
 import { runningTotal, sendExpenseNotice, settleText } from "./messages";
@@ -44,8 +47,25 @@ export async function handleDM(ctx: Ctx, msg: InboundDM): Promise<void> {
   const reply = (t: string) => dm(ctx, user.id, t);
 
   try {
+    // A reply to "which trip is this for?"
+    const choice = getPrompt(ctx, user.id, "choose_trip");
+    if (choice && msg.images.length === 0) {
+      const options = choice.groupIds.map((id) => getGroup(ctx, id)).filter((g): g is Group => !!g && !g.closedAt);
+      const picked = parseTripChoice(text, options);
+      if (picked) {
+        clearPrompt(ctx, user.id, "choose_trip");
+        if (choice.action.type === "command") {
+          const cmd = parseCommand(choice.action.text);
+          return cmd ? await runCommand(ctx, user, cmd, reply, choice.action.text, picked) : undefined;
+        }
+        const saved = takePendingMessage(ctx, user.id, user.phone);
+        if (!saved) return await reply(`That one timed out. Send it again with the trip in it, like "paid $40 for gas #${tripTag(picked)}".`);
+        return await captureExpense(ctx, user, picked, saved, dmId, reply);
+      }
+    }
+
     const command = msg.images.length === 0 ? parseCommand(text) : undefined;
-    if (command) return await runCommand(ctx, user, command, reply);
+    if (command) return await runCommand(ctx, user, command, reply, text);
 
     // "What should I call you?"
     const namePrompt = getPrompt(ctx, user.id, "name");
@@ -63,14 +83,14 @@ export async function handleDM(ctx: Ctx, msg: InboundDM): Promise<void> {
       }
     }
 
-    const group = activeGroup(ctx, user);
-    if (!group) return await reply(WELCOME_NO_GROUP);
+    const open = openGroupsOf(ctx, user.id);
+    if (open.length === 0) return await reply(WELCOME_NO_GROUP);
 
-    // The payer of a disputed expense is replying: a receipt photo or a new amount applies to it.
-    const disputed = openDispute(ctx, user, group);
+    // The payer of a flagged expense is replying: a receipt photo or a new amount applies to it.
+    const disputed = openDispute(ctx, user);
     let preRead: Awaited<ReturnType<typeof readImage>> | undefined;
     if (disputed && msg.images.length > 0) {
-      preRead = await readImage(ctx, group, msg, text);
+      preRead = await readImage(ctx, getGroup(ctx, disputed.groupId)!, msg, text);
       if (preRead.extraction.unavailable) return await reply(AI_UNAVAILABLE);
       if (isReadableReceipt(preRead.extraction)) return await attachReceipt(ctx, user, disputed, preRead, reply);
       // Not a receipt: handle it like any other photo below.
@@ -83,9 +103,9 @@ export async function handleDM(ctx: Ctx, msg: InboundDM): Promise<void> {
 
     // "that was just for Ayug": the payer fixing who their last (or flagged) expense was for.
     if (msg.images.length === 0) {
-      const members = membersOf(ctx, group.id).map((m) => ({ id: m.id, name: m.displayName }));
-      const who = parseWhoFix(text, members, user.id);
-      const target = who ? disputed ?? latestExpenseBy(ctx, user.id, group.id) : undefined;
+      const target = disputed ?? latestExpenseIn(ctx, user.id, open.map((g) => g.id));
+      const members = target ? membersOf(ctx, target.groupId).map((m) => ({ id: m.id, name: m.displayName })) : [];
+      const who = target ? parseWhoFix(text, members, user.id) : undefined;
       if (who && target) {
         const ids = who === "all" ? members.map((m) => m.id) : who;
         if (ids.length === 1 && ids[0] === user.id) return await reply("That would make it just you, so there's nothing to split. Who was it for?");
@@ -96,10 +116,10 @@ export async function handleDM(ctx: Ctx, msg: InboundDM): Promise<void> {
 
     // "What was the $20 for?" → "firewood"
     const reasonPrompt = getPrompt(ctx, user.id, "reason");
-    if (reasonPrompt && msg.images.length === 0 && text && !/\d/.test(text) && text.split(/\s+/).length <= 5) {
+    const reasonGroup = reasonPrompt ? getGroup(ctx, reasonPrompt.groupId) : undefined;
+    if (reasonPrompt && reasonGroup && msg.images.length === 0 && text && !/\d/.test(text) && text.split(/\s+/).length <= 5) {
       clearPrompt(ctx, user.id, "reason");
-      const g = getGroup(ctx, reasonPrompt.groupId) ?? group;
-      return await recordExpense(ctx, user, g, {
+      return await recordExpense(ctx, user, reasonGroup, {
         reason: text.replace(/^(it was |for |it's |its )/i, "").trim(),
         totalCents: reasonPrompt.amountCents,
         participants: reasonPrompt.participants,
@@ -109,7 +129,17 @@ export async function handleDM(ctx: Ctx, msg: InboundDM): Promise<void> {
       });
     }
 
-    return await captureExpense(ctx, user, group, msg, dmId, reply, preRead);
+    // Which trip? Named in the message, your only open trip, or ask.
+    const { matches, cleaned } = findTripMention(text, open);
+    const group = matches.length === 1 ? matches[0]! : matches.length === 0 && open.length === 1 ? open[0]! : undefined;
+    if (!group) {
+      const options = matches.length > 1 ? matches : open;
+      await savePendingMessage(ctx, user.id, msg);
+      setPrompt(ctx, user.id, { kind: "choose_trip", groupIds: options.map((g) => g.id), action: { type: "message" } }, CHOOSE_TRIP_TTL_MS);
+      return await reply(`Which trip is ${pendingLabel(msg)} for?\n${tripMenu(options)}\nReply with the number.`);
+    }
+    const routed = matches.length ? { ...msg, text: cleaned || null } : msg;
+    return await captureExpense(ctx, user, group, routed, dmId, reply, preRead && disputed?.groupId === group.id ? preRead : undefined);
   } catch (err) {
     console.error("[bot] error handling DM", err);
     await reply("Sorry, something went wrong on my end. Try that again in a moment.");
@@ -118,17 +148,69 @@ export async function handleDM(ctx: Ctx, msg: InboundDM): Promise<void> {
 
 type Reply = (text: string) => Promise<void>;
 
+/** How long "which trip is this for?" waits for an answer. */
+const CHOOSE_TRIP_TTL_MS = 30 * 60 * 1000;
+
+function multiTripHint(open: Group[]): string {
+  const tags = open.slice(0, 3).map((g) => `#${tripTag(g)}`).join(" or ");
+  return `You're in ${open.length} trips, so add the trip when you text me (like "paid $40 for gas ${tags.split(" or ")[0]}"), or I'll ask which one. Tags: ${tags}.`;
+}
+
+/** "Gas $80" / "this receipt" / "that": for "which trip is ___ for?" */
+function pendingLabel(msg: InboundDM): string {
+  if (msg.images.length) return "this photo";
+  const text = msg.text ?? "";
+  const cents = findAmount(text);
+  const reason = findReason(text, []);
+  if (cents && reason) return `"${capitalize(reason)} ${$(cents)}"`;
+  if (cents) return `that ${$(cents)}`;
+  return "that";
+}
+
+async function endTrip(ctx: Ctx, user: User, group: Group, reply: Reply) {
+  if (group.closedAt) return reply(`${group.name} has already ended.`);
+  if (group.organizerId !== user.id) return reply(`Only ${nameOf(getUser(ctx, group.organizerId))}, who started ${group.name}, can end it.`);
+  const debts = groupDebts(ctx, group.id);
+  const confirm = getPrompt(ctx, user.id, "end_trip");
+  if (debts.length && confirm?.groupId !== group.id) {
+    setPrompt(ctx, user.id, { kind: "end_trip", groupId: group.id }, 10 * 60_000);
+    const lines = debts.map((d) => `• ${nameOf(getUser(ctx, d.fromId))} → ${nameOf(getUser(ctx, d.toId))} ${$(d.cents)}`);
+    return reply(`${group.name} isn't settled yet:\n${lines.join("\n")}\nText SETTLE first, or reply END TRIP again to close it anyway.`);
+  }
+  clearPrompt(ctx, user.id, "end_trip");
+  closeGroup(ctx, group.id);
+  const tail = debts.length ? "Anything still owed can be paid with PAY." : "Everyone's settled up 🎉";
+  for (const m of membersOf(ctx, group.id)) {
+    await dm(ctx, m.id, `🏁 ${nameOf(user)} ended ${group.name}. ${tail} Text "summary ${tripTag(group)}" anytime to see the final tab.`);
+  }
+}
+
 /** "What was the $20 for?" only waits briefly, so a later unrelated message isn't taken as the answer. */
 const REASON_PROMPT_TTL_MS = 15 * 60 * 1000;
 
 // ------------------------------------------------------------------ commands
 
-async function runCommand(ctx: Ctx, user: User, cmd: Command, reply: Reply): Promise<void> {
-  const group = activeGroup(ctx, user);
-  const needGroup = async () => {
-    await reply(WELCOME_NO_GROUP);
+async function runCommand(ctx: Ctx, user: User, cmd: Command, reply: Reply, rawText: string, forced?: Group): Promise<void> {
+  const open = openGroupsOf(ctx, user.id);
+  const all = groupsOf(ctx, user.id);
+  const mentioned = forced ? [forced] : findTripMention(rawText, all).matches;
+
+  /** The trip this command is about: forced, named, or the only open one. Otherwise asks and returns undefined. */
+  const pickTrip = async (): Promise<Group | undefined> => {
+    if (mentioned.length === 1) return mentioned[0];
+    // No open trips left? Ended ones still work for SUMMARY / WHY / PAY.
+    const options = mentioned.length > 1 ? mentioned : open.length ? open : all;
+    if (options.length === 1) return options[0];
+    if (options.length === 0) {
+      await reply(WELCOME_NO_GROUP);
+      return undefined;
+    }
+    setPrompt(ctx, user.id, { kind: "choose_trip", groupIds: options.map((g) => g.id), action: { type: "command", text: rawText } }, CHOOSE_TRIP_TTL_MS);
+    await reply(`Which trip?\n${tripMenu(options)}\nReply with the number.`);
     return undefined;
   };
+  /** A person's name in PAY/WHY, unless it's actually a trip name ("pay asheville"). */
+  const personArg = (who?: string) => (who && findTripMention(who, all).matches.length === 0 ? who : undefined);
 
   switch (cmd.type) {
     case "help":
@@ -139,6 +221,7 @@ async function runCommand(ctx: Ctx, user: User, cmd: Command, reply: Reply): Pro
       await ensureWallet(ctx, user);
       await reply(`${g.name} created! Paste this in your group chat so people can join:`);
       await reply(joinInvite(g, ctx.config));
+      if (open.length > 0) await reply(multiTripHint(openGroupsOf(ctx, user.id)));
       if (!user.displayName) {
         setPrompt(ctx, user.id, { kind: "name" }, timings(ctx.config).promptTtlMs);
         await reply(ASK_NAME);
@@ -153,18 +236,18 @@ async function runCommand(ctx: Ctx, user: User, cmd: Command, reply: Reply): Pro
       return;
     }
 
-    case "use": {
-      const g = findUserGroup(ctx, user.id, cmd.query);
-      if (!g) return reply(`You're not in a group called "${cmd.query}". Text GROUPS to see yours.`);
-      updateUser(ctx, user.id, { activeGroupId: g.id });
-      return reply(`Switched to ${g.name}. New expenses will go there.`);
-    }
+    case "use":
+      return reply(
+        open.length > 1
+          ? `No need to switch. ${multiTripHint(open)}`
+          : `You're only in ${open[0]?.name ?? "no trips"} right now, so everything goes there.`,
+      );
 
     case "groups": {
-      const mine = groupsOf(ctx, user.id);
-      if (!mine.length) return reply(WELCOME_NO_GROUP);
-      const lines = mine.map((g) => `${g.id === group?.id ? "▶" : "•"} ${g.name} (code ${g.joinCode})`);
-      return reply(`Your groups:\n${lines.join("\n")}\nText USE <name> to switch.`);
+      if (!all.length) return reply(WELCOME_NO_GROUP);
+      const lines = open.map((g) => `• ${g.name} (#${tripTag(g)})`);
+      const ended = all.filter((g) => g.closedAt).map((g) => `• ${g.name} (ended)`);
+      return reply(`Your trips:\n${[...lines, ...ended].join("\n")}${open.length > 1 ? `\n${multiTripHint(open)}` : ""}`);
     }
 
     case "name":
@@ -172,29 +255,43 @@ async function runCommand(ctx: Ctx, user: User, cmd: Command, reply: Reply): Pro
       clearPrompt(ctx, user.id, "name");
       return reply(`Got it, I'll call you ${cmd.name}.`);
 
-    case "balance":
-      if (!group) return void (await needGroup());
-      return reply(balanceText(ctx, user, group));
+    case "balance": {
+      if (mentioned.length === 1) return reply(balanceText(ctx, user, mentioned[0]!));
+      if (!open.length) return reply(WELCOME_NO_GROUP);
+      // In several trips: show them all rather than asking.
+      return reply(open.map((g) => balanceText(ctx, user, g)).join("\n\n"));
+    }
 
     case "summary": {
-      if (!group) return void (await needGroup());
+      const group = await pickTrip();
+      if (!group) return;
       await reply(summaryText(buildSummary(ctx, user, group)));
       // Sent on its own so iMessage shows it as a rich card (Partiful-style).
       return dmLink(ctx, user.id, tabLinkUrl(ctx, user.id, group.id));
     }
 
-    case "settle":
-      if (!group) return void (await needGroup());
-      return settle(ctx, user, group, reply);
+    case "settle": {
+      const group = await pickTrip();
+      return group ? settle(ctx, user, group, reply) : undefined;
+    }
 
-    case "pay":
-      if (!group) return void (await needGroup());
-      return pay(ctx, user, group, cmd.who, reply);
+    case "pay": {
+      const group = await pickTrip();
+      return group ? pay(ctx, user, group, personArg(cmd.who), reply) : undefined;
+    }
+
+    case "end_trip": {
+      const confirm = getPrompt(ctx, user.id, "end_trip");
+      const group = mentioned.length === 0 && confirm ? getGroup(ctx, confirm.groupId) : await pickTrip();
+      return group ? endTrip(ctx, user, group, reply) : undefined;
+    }
 
     case "why": {
-      if (!group) return void (await needGroup());
-      const who = cmd.who ? findMember(ctx, group, cmd.who, user.id) : undefined;
-      if (cmd.who && !who) return reply(explain(ctx, user, group));
+      const group = await pickTrip();
+      if (!group) return;
+      const whoArg = personArg(cmd.who);
+      const who = whoArg ? findMember(ctx, group, whoArg, user.id) : undefined;
+      if (whoArg && !who) return reply(explain(ctx, user, group));
       return reply(explain(ctx, user, group, who?.id));
     }
 
@@ -207,7 +304,7 @@ async function runCommand(ctx: Ctx, user: User, cmd: Command, reply: Reply): Pro
     case "fix":
     case "withdraw":
     case "accept": {
-      const expense = openDispute(ctx, user, group);
+      const expense = openDispute(ctx, user);
       if (!expense) return reply("None of your expenses are flagged right now.");
       if (cmd.type === "withdraw") {
         clearPrompt(ctx, user.id, "fix");
@@ -317,15 +414,19 @@ async function pay(ctx: Ctx, user: User, group: Group, who: string | undefined, 
  * expense, or a leftover approval from the old flow.
  */
 async function approve(ctx: Ctx, user: User, reply: Reply) {
-  const group = activeGroup(ctx, user);
-  const flagged = openDispute(ctx, user, group);
+  const open = openGroupsOf(ctx, user.id);
+  const group = open.length === 1 ? open[0] : undefined;
+  const flagged = openDispute(ctx, user);
   const prompt = getPrompt(ctx, user.id, "fix");
   if (flagged && prompt?.expenseId === flagged.id && prompt.suggestedCents) {
     clearPrompt(ctx, user.id, "fix");
     return revise(ctx, user, flagged, { totalCents: prompt.suggestedCents }, reply);
   }
   const pending = pendingSharesFor(ctx, user.id);
-  if (pending.length === 0) return reply(group ? `👍 ${group.name}: ${runningTotal(ctx, group.id, user.id)}.` : "👍");
+  if (pending.length === 0) {
+    if (group) return reply(`👍 ${group.name}: ${runningTotal(ctx, group.id, user.id)}.`);
+    return reply(`👍 ${open.map((g) => `${g.name}: ${runningTotal(ctx, g.id, user.id)}`).join(" · ") || ""}`.trim());
+  }
   for (const t of pending) applyShareAction(ctx, t.share.id, { type: "approve", actorId: user.id, via: "reply" });
   return reply(`✅ Got it: ${listOf(pending.map((t) => `${t.expense.description} (your share ${$(t.share.cents)})`))}.`);
 }
@@ -336,10 +437,11 @@ async function approve(ctx: Ctx, user: User, reply: Reply) {
  * Tab told you about, else your most recent.
  */
 async function dispute(ctx: Ctx, user: User, cmd: Extract<Command, { type: "dispute" }>, reply: Reply) {
-  const group = activeGroup(ctx, user);
-  if (!group) return reply("There's nothing for you to flag right now.");
-  const mine = userSharesInGroup(ctx, user.id, group.id).filter((d) => d.share.approvedVia !== "payer" && d.share.status !== "rejected");
-  const flaggable = mine.filter((d) => d.share.status !== "disputed");
+  const open = openGroupsOf(ctx, user.id);
+  const flaggable = open
+    .flatMap((g) => userSharesInGroup(ctx, user.id, g.id))
+    .filter((d) => d.share.approvedVia !== "payer" && d.share.status === "approved")
+    .sort((a, b) => b.expense.createdAt - a.expense.createdAt);
   const named = cmd.reason ? flaggable.find((d) => sameDescription(d.expense.description, cmd.reason)) : undefined;
   const notice = getPrompt(ctx, user.id, "notice");
   const target = named ?? flaggable.find((d) => d.share.id === notice?.shareId) ?? flaggable[0];
@@ -347,7 +449,7 @@ async function dispute(ctx: Ctx, user: User, cmd: Extract<Command, { type: "disp
   if (!cmd.reason) return reply(`What's off with ${target.expense.description} ${$(target.expense.totalCents)}? Reply like "nope, I didn't eat".`);
   if (!(await disputeShare(ctx, user, target, cmd.reason))) return reply("I couldn't flag that one.");
   await reply(
-    `Got it, I let ${nameOf(target.payer)} know. Your ${$(target.share.cents)} share of ${target.expense.description} is on hold until you two sort it out. Running total: ${runningTotal(ctx, group.id, user.id)}.`,
+    `Got it, I let ${nameOf(target.payer)} know. Your ${$(target.share.cents)} share of ${target.expense.description}${open.length > 1 ? ` (${target.group.name})` : ""} is on hold until you two sort it out. Running total: ${runningTotal(ctx, target.group.id, user.id)}.`,
   );
 }
 
@@ -462,10 +564,10 @@ function isReadableReceipt(e: ImageExtraction): boolean {
  * The expense this payer is currently being asked to fix: the one from their
  * open "fix" prompt if it's still disputed, else their newest disputed expense in this group.
  */
-function openDispute(ctx: Ctx, user: User, group: Group | undefined): Expense | undefined {
+function openDispute(ctx: Ctx, user: User): Expense | undefined {
   const prompt = getPrompt(ctx, user.id, "fix");
   const all = disputedExpensesOf(ctx, user.id);
-  return all.find((e) => e.id === prompt?.expenseId) ?? all.find((e) => e.groupId === group?.id);
+  return all.find((e) => e.id === prompt?.expenseId) ?? all[0];
 }
 
 async function attachReceipt(ctx: Ctx, user: User, expense: Expense, read: Awaited<ReturnType<typeof readImage>>, reply: Reply) {

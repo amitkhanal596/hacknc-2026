@@ -12,7 +12,7 @@ describe("command parsing", () => {
   it("parses commands and leaves expenses alone", () => {
     expect(parseCommand("new trip Asheville")).toEqual({ type: "new", kind: "trip", name: "Asheville Trip" });
     expect(parseCommand("NEW lake tahoe")).toEqual({ type: "new", kind: "trip", name: "Lake Tahoe Trip" });
-    expect(parseCommand("new roommates apt 4b")).toEqual({ type: "new", kind: "roommates", name: "Apt 4b" });
+    expect(parseCommand("new roommates apt 4b")).toEqual({ type: "new", kind: "roommates", name: "Apt 4B" });
     expect(parseCommand("JOIN ashev42 - I'm Priya")).toEqual({ type: "join", code: "ASHEV42", name: "Priya" });
     expect(parseCommand("join ASHEV42")).toEqual({ type: "join", code: "ASHEV42", name: undefined });
     expect(parseCommand("yes")).toEqual({ type: "yes", all: false, numbers: [] });

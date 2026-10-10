@@ -28,7 +28,7 @@ app.get("/started", (c) => c.html(startedPage({ name: "Amit", line: "+1415605583
 // Fake tab for designing the summary page + iMessage card.
 const now = Date.now();
 const fake: TabSummary = {
-  group: { id: "g", name: "Asheville Trip", kind: "trip", joinCode: "ASHEV42", organizerId: "u1", settleRequestedAt: null, createdAt: now },
+  group: { id: "g", name: "Asheville Trip", kind: "trip", joinCode: "ASHEV42", organizerId: "u1", settleRequestedAt: null, closedAt: null, createdAt: now },
   user: { id: "u1", phone: "+19195550001", displayName: "Amit", activeGroupId: "g", photonLine: "+14156055838", walletPubkey: null, walletSecretEnc: null, stripeAccountId: null, stripePayoutsEnabled: false, verifiedAt: null, createdAt: now },
   net: 4000,
   paidCents: 9000,

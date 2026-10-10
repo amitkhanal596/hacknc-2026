@@ -25,7 +25,7 @@ The **native iMessage extension** is how Tab appears in the *real* group chat. M
 |---|---|
 | Messaging | **Photon Spectrum cloud, 1:1 DMs only.** Our subscription doesn't include group chats, so the bot never sits in a group thread. Groups live on our server. |
 | Joining a group | The organizer texts "new trip Tahoe." The bot replies with a join code and a one-tap link (`sms:<bot>&body=JOIN TAHOE42`) to paste into the real group chat. Members text `JOIN TAHOE42`. |
-| Expense input | Members DM receipts, screenshots, or text. Expenses go to their **active group** (the one they last created, joined, or picked with `USE <name>`). Every confirmation names the group. |
+| Expense input | Members DM receipts, screenshots, or text. **In one trip:** just the amount and description. **In several trips:** Tab asks "Which trip is this for? 1) … 2) …" unless the message names one ("#asheville", "for the asheville trip", "apartment: …"). The organizer can **END TRIP** so finished trips stop counting. |
 | Payments | **Two ways to pay, one ledger.** **Solana:** USDC from wallets the backend makes for each user (devnet). **Apple Pay:** Stripe (test mode) on our web pay page, with payouts to the creditor in **dollars via Stripe Connect**. |
 | Apple Pay placement | **Web** (Stripe Express Checkout on the pay page). No paid Apple Developer account needed. The extension's Pay button opens that page. |
 | Creditor payouts | Creditors who want card or Apple Pay payments connect Stripe once (onboarding link sent by DM). Money paid before they connect is **held** and transferred once they do. |

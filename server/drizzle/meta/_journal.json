@@ -29,6 +29,13 @@
       "when": 1791665019843,
       "tag": "0003_settle_requested",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1791672839555,
+      "tag": "0004_trips",
+      "breakpoints": true
     }
   ]
 }
