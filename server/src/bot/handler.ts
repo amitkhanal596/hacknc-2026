@@ -15,8 +15,7 @@ import { clearPrompt, getPrompt, logDM, recentInbound, setPrompt } from "../stor
 import {
   applyShareAction,
   createExpense,
-  getExpense,
-  latestDisputedExpense,
+  disputedExpensesOf,
   pendingSharesFor,
   receiptHistory,
   reviseExpense,
@@ -29,7 +28,7 @@ import {
 import { activeGroup, addMember, createGroup, findUserGroup, getGroup, getGroupByCode, groupsOf, isMember, membersOf } from "../store/groups";
 import { getReceiptImage, receiptFileName, saveReceiptImage } from "../store/receipts";
 import { ensureWallet, getOrCreateUser, getUser, nameOf, updateUser } from "../store/users";
-import { looksLikeName, parseCommand, type Command } from "./commands";
+import { looksLikeName, parseCommand, parseFixReply, sameDescription, suggestedAmount, type Command } from "./commands";
 import { explain } from "./explain";
 import { announceJoin, joinGroup } from "./join";
 import { approvalText, sendApprovalRequests, settleText } from "./messages";
@@ -64,11 +63,19 @@ export async function handleDM(ctx: Ctx, msg: InboundDM): Promise<void> {
     const group = activeGroup(ctx, user);
     if (!group) return await reply(WELCOME_NO_GROUP);
 
-    // A photo from a payer whose expense was disputed: attach it as the receipt.
-    const fixPrompt = getPrompt(ctx, user.id, "fix");
-    if (fixPrompt && msg.images.length > 0) {
-      const expense = getExpense(ctx, fixPrompt.expenseId);
-      if (expense?.status === "active") return await attachReceipt(ctx, user, expense, msg, reply);
+    // The payer of a disputed expense is replying: a receipt photo or a new amount applies to it.
+    const disputed = openDispute(ctx, user, group);
+    let preRead: Awaited<ReturnType<typeof readImage>> | undefined;
+    if (disputed && msg.images.length > 0) {
+      preRead = await readImage(ctx, group, msg, text);
+      if (preRead.extraction.unavailable) return await reply(AI_UNAVAILABLE);
+      if (isReadableReceipt(preRead.extraction)) return await attachReceipt(ctx, user, disputed, preRead, reply);
+      // Not a receipt: handle it like any other photo below.
+    }
+    const fixCents = disputed && msg.images.length === 0 ? parseFixReply(text) : undefined;
+    if (disputed && fixCents) {
+      clearPrompt(ctx, user.id, "fix");
+      return await revise(ctx, user, disputed, { totalCents: fixCents }, reply);
     }
 
     // "What was the $20 for?" → "firewood"
@@ -86,7 +93,7 @@ export async function handleDM(ctx: Ctx, msg: InboundDM): Promise<void> {
       });
     }
 
-    return await captureExpense(ctx, user, group, msg, dmId, reply);
+    return await captureExpense(ctx, user, group, msg, dmId, reply, preRead);
   } catch (err) {
     console.error("[bot] error handling DM", err);
     await reply("Sorry, something went wrong on my end. Try that again in a moment.");
@@ -175,14 +182,19 @@ async function runCommand(ctx: Ctx, user: User, cmd: Command, reply: Reply): Pro
       return dispute(ctx, user, cmd, reply);
 
     case "fix":
-    case "withdraw": {
+    case "withdraw":
+    case "accept": {
+      const expense = openDispute(ctx, user, group);
+      if (!expense) return reply("None of your expenses are disputed right now.");
+      if (cmd.type === "withdraw") {
+        clearPrompt(ctx, user.id, "fix");
+        return withdraw(ctx, user, expense, reply);
+      }
       const prompt = getPrompt(ctx, user.id, "fix");
-      const fromPrompt = prompt ? getExpense(ctx, prompt.expenseId) : undefined;
-      const expense = fromPrompt?.status === "active" ? fromPrompt : latestDisputedExpense(ctx, user.id);
-      if (!expense || expense.payerId !== user.id) return reply("None of your expenses are disputed right now.");
+      const cents = cmd.type === "fix" ? cmd.cents : prompt?.expenseId === expense.id ? prompt.suggestedCents : undefined;
+      if (!cents) return reply(`What should the new total for ${expense.description} be? Reply like "make it $30", or WITHDRAW to remove it.`);
       clearPrompt(ctx, user.id, "fix");
-      if (cmd.type === "withdraw") return withdraw(ctx, user, expense, reply);
-      return revise(ctx, user, expense, { totalCents: cmd.cents }, reply);
+      return revise(ctx, user, expense, { totalCents: cents }, reply);
     }
 
     case "payouts": {
@@ -219,6 +231,11 @@ function balanceText(ctx: Ctx, user: User, group: Group): string {
   if (owedMe.length) lines.push(`${owedMe.join(". ")}.`);
   if (!iOwe.length && !owedMe.length) lines.push("You're all settled up.");
   if (pending) lines.push(`${pending} expense${pending > 1 ? "s" : ""} waiting on your OK (reply YES or DISPUTE).`);
+  const mineDisputed = userSharesInGroup(ctx, user.id, group.id).filter((d) => d.share.status === "disputed");
+  for (const d of mineDisputed) lines.push(`⏸ You disputed ${d.expense.description} ${$(d.expense.totalCents)} (waiting on ${nameOf(d.payer)}).`);
+  for (const e of disputedExpensesOf(ctx, user.id, group.id)) {
+    lines.push(`⏸ Your ${e.description} ${$(e.totalCents)} is disputed. Reply with a new amount (like "make it $${Math.max(1, Math.round(e.totalCents / 200))}"), WITHDRAW, or send a receipt.`);
+  }
   return lines.join("\n");
 }
 
@@ -335,12 +352,18 @@ async function dispute(ctx: Ctx, user: User, cmd: Extract<Command, { type: "disp
 export async function disputeShare(ctx: Ctx, user: User, target: ShareDetail, reason: string): Promise<boolean> {
   const r = applyShareAction(ctx, target.share.id, { type: "dispute", actorId: user.id, reason });
   if (!r.ok) return false;
-  setPrompt(ctx, target.payer.id, { kind: "fix", expenseId: target.expense.id }, timings(ctx.config).promptTtlMs);
-  await dm(
+  const suggested = suggestedAmount(reason);
+  const suggestedCents = suggested && suggested !== target.expense.totalCents ? suggested : undefined;
+  setPrompt(
     ctx,
     target.payer.id,
-    `${nameOf(user)} disputed ${target.expense.description} ${$(target.expense.totalCents)}: "${reason}".\nReply FIX $amount to change the total, WITHDRAW to remove it, or send a receipt photo.`,
+    { kind: "fix", expenseId: target.expense.id, suggestedCents, suggestedBy: user.id },
+    timings(ctx.config).promptTtlMs,
   );
+  const options = suggestedCents
+    ? `${nameOf(user)} suggests ${$(suggestedCents)}. Reply ACCEPT to change the total to ${$(suggestedCents)}, reply with a different amount (like "make it $${Math.round(suggestedCents / 100)}"), WITHDRAW to remove it, or send a receipt photo.`
+    : `Reply with the new total (like "make it $${Math.max(1, Math.round(target.expense.totalCents / 200))}"), WITHDRAW to remove it, or send a receipt photo.`;
+  await dm(ctx, target.payer.id, `${nameOf(user)} disputed ${target.expense.description} ${$(target.expense.totalCents)}: "${reason}".\n${options}`);
   return true;
 }
 
@@ -407,19 +430,36 @@ function receiptFrom(extraction: ImageExtraction, hash: string): ReceiptInfo {
   return { totalCents: extraction.totalCents, merchant: extraction.merchant, date: extraction.date, hash };
 }
 
-async function attachReceipt(ctx: Ctx, user: User, expense: Expense, msg: InboundDM, reply: Reply) {
-  const group = getGroup(ctx, expense.groupId)!;
-  const { extraction, hash, photo } = await readImage(ctx, group, msg, msg.text ?? "");
-  if (extraction.unavailable) return reply(AI_UNAVAILABLE);
-  if (extraction.kind !== "receipt" || !extraction.totalCents || extraction.confidence < MIN_RECEIPT_CONFIDENCE) {
-    return reply("I couldn't read a total on that. Try a clearer photo of the receipt, or reply FIX $amount.");
-  }
+function isReadableReceipt(e: ImageExtraction): boolean {
+  return e.kind === "receipt" && !!e.totalCents && e.confidence >= MIN_RECEIPT_CONFIDENCE;
+}
+
+/**
+ * The expense this payer is currently being asked to fix: the one from their
+ * open "fix" prompt if it's still disputed, else their newest disputed expense in this group.
+ */
+function openDispute(ctx: Ctx, user: User, group: Group | undefined): Expense | undefined {
+  const prompt = getPrompt(ctx, user.id, "fix");
+  const all = disputedExpensesOf(ctx, user.id);
+  return all.find((e) => e.id === prompt?.expenseId) ?? all.find((e) => e.groupId === group?.id);
+}
+
+async function attachReceipt(ctx: Ctx, user: User, expense: Expense, read: Awaited<ReturnType<typeof readImage>>, reply: Reply) {
+  const { extraction, hash, photo } = read;
   clearPrompt(ctx, user.id, "fix");
   saveReceiptImage(ctx, expense.id, photo.mimeType, photo.data);
   return revise(ctx, user, expense, { receipt: receiptFrom(extraction, hash) }, reply);
 }
 
-async function captureExpense(ctx: Ctx, user: User, group: Group, msg: InboundDM, dmId: string, reply: Reply) {
+async function captureExpense(
+  ctx: Ctx,
+  user: User,
+  group: Group,
+  msg: InboundDM,
+  dmId: string,
+  reply: Reply,
+  preRead?: Awaited<ReturnType<typeof readImage>>,
+) {
   // A new expense means they've moved on from any unanswered "what was it for?".
   clearPrompt(ctx, user.id, "reason");
   const text = msg.text?.trim() ?? "";
@@ -429,10 +469,10 @@ async function captureExpense(ctx: Ctx, user: User, group: Group, msg: InboundDM
   let describedText = text;
 
   if (msg.images.length > 0) {
-    const read = await readImage(ctx, group, msg, text);
+    const read = preRead ?? (await readImage(ctx, group, msg, text));
     const { extraction, hash } = read;
     if (extraction.unavailable) return reply(AI_UNAVAILABLE);
-    if (extraction.kind === "receipt" && extraction.totalCents && extraction.confidence >= MIN_RECEIPT_CONFIDENCE) {
+    if (isReadableReceipt(extraction)) {
       receipt = receiptFrom(extraction, hash);
       photo = read.photo;
     } else if (extraction.kind === "chat_screenshot" && extraction.claimedText) {
@@ -511,6 +551,15 @@ async function recordExpense(
   }
 
   const description = capitalize(input.reason ?? input.receipt?.merchant ?? "Expense");
+
+  // "...$40 for fortnite lessons" while "Fortnite lessons" is disputed: that's a fix, not a second expense.
+  const disputedTwin = disputedExpensesOf(ctx, user.id, group.id).find((e) => sameDescription(e.description, description));
+  if (disputedTwin) {
+    clearPrompt(ctx, user.id, "fix");
+    await reply(`That sounds like the disputed ${disputedTwin.description} (${$(disputedTwin.totalCents)}), so I updated it instead of adding a new one.`);
+    if (input.photo) saveReceiptImage(ctx, disputedTwin.id, input.photo.mimeType, input.photo.data);
+    return revise(ctx, user, disputedTwin, { totalCents: result.totalCents, receipt: input.receipt }, reply);
+  }
   const { expense, shares } = createExpense(ctx, {
     groupId: group.id,
     payerId: user.id,

@@ -68,6 +68,11 @@ export function findReason(text: string, members: Member[]): string | undefined 
 export function findParticipants(text: string, senderId: string, members: Member[]): "all" | string[] {
   const lower = text.toLowerCase();
   const mentioned = members.filter((m) => m.name && new RegExp(`\\b${escapeRegex(m.name.toLowerCase())}\\b`).test(lower));
+  // "Jake owes me $20 for gas": the sender paid and Jake owes all of it.
+  if (/\bow(?:es|ed|e)\s+me\b/.test(lower)) {
+    const debtors = mentioned.filter((m) => m.id !== senderId).map((m) => m.id);
+    if (debtors.length) return debtors;
+  }
   const exclusion = lower.match(/\b(?:but|except|minus|without)\b(.*)$/);
   if (exclusion) {
     const excluded = new Set(

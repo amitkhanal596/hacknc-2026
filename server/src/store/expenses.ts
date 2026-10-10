@@ -229,6 +229,20 @@ export function latestDisputedExpense(ctx: Ctx, payerId: string): Expense | unde
     .get()?.expense;
 }
 
+/** The payer's active expenses that have at least one disputed share, newest first. */
+export function disputedExpensesOf(ctx: Ctx, payerId: string, groupId?: string): Expense[] {
+  const rows = ctx.db
+    .select({ expense: expenses })
+    .from(expenses)
+    .innerJoin(expenseShares, eq(expenseShares.expenseId, expenses.id))
+    .where(and(eq(expenses.payerId, payerId), eq(expenses.status, "active"), eq(expenseShares.status, "disputed")))
+    .orderBy(desc(expenses.createdAt))
+    .all()
+    .map((r) => r.expense);
+  const unique = [...new Map(rows.map((e) => [e.id, e])).values()];
+  return groupId ? unique.filter((e) => e.groupId === groupId) : unique;
+}
+
 /** Payer withdraws: the expense is removed and every share becomes rejected. */
 export function withdrawExpense(ctx: Ctx, expenseId: string, actorId: string) {
   ctx.db.transaction((tx) => {

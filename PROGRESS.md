@@ -65,7 +65,7 @@ What's left:
 - [x] Gemini model chain (3.8 → 3.5 → 2.5 → 2.5-lite) with 12s timeouts and cooldowns; free tier is 20 req/day/model
 - [x] Approval DMs to each person, batched (YES ALL / YES 1 3 / DISPUTE 2 reason)
 - [x] Prompts per kind so bare replies resolve safely ("what was the $20 for?" → "firewood")
-- [x] Disputes → payer can FIX $amount, WITHDRAW, or send a receipt photo; everyone re-approves
+- [x] Disputes → payer replies with a new amount in plain words ("$30 is fine", "make it 40"), ACCEPTs the disputer's suggested amount, WITHDRAWs, or sends a receipt photo; same-named new expense updates the disputed one instead of duplicating; BALANCE lists open disputes
 - [x] WHY explanations (deterministic, from records only)
 - [x] Settle-up DMs with both payment options
 
@@ -154,3 +154,4 @@ npm run dev               # real server (Spectrum + HTTP API + jobs)
 | 2026-10-10 | AK + Claude | Keys set up in `server/.env` (Gemini, Stripe + webhook secret, Photon, generated secrets, Solana treasury). Installed Stripe CLI + cloudflared. Live-tested Gemini (receipt photo), Stripe (PaymentIntent + webhook), Photon (connect). Found Photon shared-line rules → added user registration + web join page. Added `npm run phone`, check scripts, TESTING.md. 44 tests. |
 | 2026-10-10 | AK + Claude | Live end-to-end on a real iPhone (Photon both ways, real devnet PAY, Stripe Connect). Join page now hands people a pre-filled JOIN text (shared lines need them to text first). Receipt photos forwarded to approvers; random pictures rejected; Gemini model chain + timeouts after hitting the free-tier 20/day limit. 51 tests. |
 | 2026-10-10 | AK + Claude | Frutiger Aero home page replaces `npm run photon:register` for organizers: enter name + number → Tab number, text/save-contact buttons, QR for the demo table. 56 tests. |
+| 2026-10-10 | AK + Claude | Fixed the dispute dead-end found in live testing ("$30 is fine" created a new expense, re-logging made a duplicate). Natural fix replies, ACCEPT suggested amount, dedupe, BALANCE shows disputes, "X owes me" = X owes all. 70 tests. |

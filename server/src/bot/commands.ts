@@ -16,6 +16,7 @@ export type Command =
   | { type: "dispute"; number?: number; reason: string }
   | { type: "fix"; cents: number }
   | { type: "withdraw" }
+  | { type: "accept" }
   | { type: "payouts" };
 
 const KIND_WORDS: Record<string, Group["kind"]> = {
@@ -91,6 +92,9 @@ export function parseCommand(input: string): Command | undefined {
     if (cents) return { type: "fix", cents };
   }
 
+  // Payer accepting the amount the other person suggested in their dispute.
+  if (/^(accept|accepted|accept it|deal)[.!]*$/i.test(text)) return { type: "accept" };
+
   if (/^(withdraw|remove it|delete it|cancel it|withdraw it)$/i.test(text)) return { type: "withdraw" };
   if (/^(payouts?|connect bank|get paid|set up payouts)$/i.test(text)) return { type: "payouts" };
 
@@ -102,4 +106,41 @@ export function looksLikeName(text: string): string | undefined {
   const t = text.trim().replace(/^(i'?m|im|i am|it'?s|call me|this is|my name is)\s+/i, "").replace(/[.!]+$/, "");
   if (/^[a-z][a-z'-]{0,20}(\s+[a-z][a-z'-]{0,20})?$/i.test(t) && parseCommand(t) === undefined) return titleCase(t);
   return undefined;
+}
+
+/**
+ * Natural replies to a dispute that set a new total: "$30 is fine", "make it 40",
+ * "change it to $40", "40 works", "ok 30". Only used when the sender has an open
+ * dispute on one of their expenses, so a bare "$30" can't be misread elsewhere.
+ */
+export function parseFixReply(input: string): number | undefined {
+  const text = input.trim().toLowerCase().replace(/[.!]+$/, "");
+  if (text.split(/\s+/).length > 8) return undefined;
+  const amount = String.raw`\$?\s?(\d[\d,]*(?:\.\d{1,2})?)(?:\s*(?:dollars|bucks))?`;
+  const patterns = [
+    new RegExp(String.raw`^(?:fix|change|update|make|set|lower|reduce|drop)\s+(?:it|that|this|the total|the amount|the price)?\s*(?:to\s+)?${amount}(?:\s+instead)?$`),
+    new RegExp(String.raw`^(?:ok|okay|fine|sure|yeah|yes|alright|deal)?[,\s]*${amount}(?:\s+(?:is fine|works|is ok|is okay|then|instead|it is|sounds good|is good|total))?$`),
+    new RegExp(String.raw`^(?:ok|okay|fine|sure|yeah|alright|deal)?[,\s]*(?:let'?s do|just|how about|i'?ll take)\s+${amount}$`),
+  ];
+  for (const re of patterns) {
+    const m = text.match(re);
+    if (m) return parseDollarsToCents(m[1]!);
+  }
+  return undefined;
+}
+
+/** "should be $30", "I'll pay $30": the amount someone suggests when disputing. */
+export function suggestedAmount(reason: string): number | undefined {
+  const m = reason.match(/\$\s?(\d[\d,]*(?:\.\d{1,2})?)|(\d[\d,]*(?:\.\d{1,2})?)\s*(?:dollars|bucks)\b/i);
+  return m ? parseDollarsToCents(m[1] ?? m[2]!) : undefined;
+}
+
+/** Loose "same expense" check: "Fortnite lessons" vs "fortnite lesson" vs "Fortnite". */
+export function sameDescription(a: string, b: string): boolean {
+  const words = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter((w) => w.length > 2).map((w) => w.replace(/s$/, ""));
+  const wa = new Set(words(a));
+  const wb = words(b);
+  if (wa.size === 0 || wb.length === 0) return false;
+  const shared = wb.filter((w) => wa.has(w)).length;
+  return shared >= Math.min(wa.size, wb.length);
 }

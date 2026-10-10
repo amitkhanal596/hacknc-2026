@@ -171,7 +171,7 @@ export type PendingPrompt =
   /** We asked "what should I call you?". Once answered, tell this group they joined. */
   | { kind: "name"; announceGroupId?: string }
   /** Someone disputed this payer's expense; FIX / WITHDRAW / a receipt photo apply to it. */
-  | { kind: "fix"; expenseId: string };
+  | { kind: "fix"; expenseId: string; suggestedCents?: number; suggestedBy?: string };
 
 export const pendingPrompts = sqliteTable(
   "pending_prompts",

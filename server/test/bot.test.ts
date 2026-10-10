@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { parseCommand } from "../src/bot/commands";
+import { parseCommand, parseFixReply, sameDescription } from "../src/bot/commands";
 import { groupDebts } from "../src/ledger/debts";
 import { owed } from "../src/ledger/settle";
+import { expensesOf } from "../src/store/expenses";
 import { getGroupByCode } from "../src/store/groups";
 import { getUserByPhone } from "../src/store/users";
 import { fakeReceipt, makeBot, PHONES } from "./helpers";
@@ -27,6 +28,27 @@ describe("command parsing", () => {
     expect(parseCommand("pay me $20")).toBeUndefined();
     expect(parseCommand("paid $80 for gas")).toBeUndefined();
     expect(parseCommand("dinner 96 split with jake and sam")).toBeUndefined();
+  });
+});
+
+describe("dispute reply parsing", () => {
+  it("reads natural new-amount replies", () => {
+    expect(parseFixReply("$30 is fine")).toBe(3000);
+    expect(parseFixReply("make it 40")).toBe(4000);
+    expect(parseFixReply("change it to $40.50")).toBe(4050);
+    expect(parseFixReply("40 works")).toBe(4000);
+    expect(parseFixReply("ok 30")).toBe(3000);
+    expect(parseFixReply("let's do 25")).toBe(2500);
+    expect(parseFixReply("fine, $35 then")).toBe(3500);
+    expect(parseFixReply("paid $30 for gas")).toBeUndefined();
+    expect(parseFixReply("see you at 5 tomorrow by the lake")).toBeUndefined();
+  });
+
+  it("matches expense names loosely", () => {
+    expect(sameDescription("Fortnite lessons", "fixed amount fortnite lessons")).toBe(true);
+    expect(sameDescription("Fortnite lessons", "Fortnite lesson")).toBe(true);
+    expect(sameDescription("Gas", "gas money")).toBe(true);
+    expect(sameDescription("Snacks", "Dinner")).toBe(false);
   });
 });
 
@@ -170,7 +192,7 @@ describe("Asheville trip, end to end over DMs", () => {
     expect(disputed).toContain("won't count until it's sorted out");
     const toSam = bot.read("sam");
     expect(toSam).toContain('Amit disputed Firewood $30.00: "I don\'t remember any firewood"');
-    expect(toSam).toContain("Reply FIX $amount to change the total, WITHDRAW to remove it, or send a receipt photo.");
+    expect(toSam).toContain('Reply with the new total (like "make it $15"), WITHDRAW to remove it, or send a receipt photo.');
 
     const updated = await bot.say("sam", "", [fakeReceipt({ totalCents: 3000, merchant: "Ingles", date: "2026-10-12" })]);
     expect(updated).toContain("Updated Firewood: $30.00 (🧾 receipt matched)");
@@ -178,6 +200,74 @@ describe("Asheville trip, end to end over DMs", () => {
     expect(toAmit).toContain("[photo: firewood-receipt.jpg]"); // the new receipt is forwarded
     expect(toAmit).toContain("Sam updated Firewood and added the receipt above.");
     expect(await bot.say("amit", "yes")).toContain("✅ Approved: Firewood");
+  });
+
+  describe("fixing a disputed expense (the Fortnite lessons bug)", () => {
+    const activeExpenses = () => expensesOf(bot.ctx, getGroupByCode(bot.ctx, code)!.id).filter((e) => e.status === "active");
+
+    beforeEach(async () => {
+      const logged = await bot.say("priya", "Amit owes me $80 for fortnite lessons");
+      expect(logged).toContain("Fortnite lessons $80.00 · owed in full");
+      expect(bot.read("amit")).toContain("Your share: $80.00");
+      await bot.say("amit", "dispute I am better than her at Fortnite");
+    });
+
+    it("tells the payer they can just reply with a new amount", () => {
+      const toPriya = bot.read("priya");
+      expect(toPriya).toContain('Amit disputed Fortnite lessons $80.00: "I am better than her at Fortnite"');
+      expect(toPriya).toContain('Reply with the new total (like "make it $40")');
+    });
+
+    it("treats '$30 is fine' as a fix to THAT expense, not a new one", async () => {
+      bot.read("priya");
+      expect(await bot.say("priya", "$30 is fine")).toContain("Updated Fortnite lessons: $30.00");
+      expect(activeExpenses()).toHaveLength(1);
+      expect(bot.read("amit")).toContain("Your share: $30.00");
+      expect(await bot.say("amit", "yes")).toContain("✅ Approved: Fortnite lessons (your share $30.00)");
+    });
+
+    for (const reply of ["make it 40", "change it to $40", "40 works", "ok $40", "fix 40"]) {
+      it(`understands "${reply}"`, async () => {
+        expect(await bot.say("priya", reply)).toContain("Updated Fortnite lessons: $40.00");
+        expect(activeExpenses()).toHaveLength(1);
+      });
+    }
+
+    it("updates the disputed expense instead of logging a duplicate with the same name", async () => {
+      const r = await bot.say("priya", "send amit $40 fixed amount for fortnite lessons");
+      expect(r).toContain("That sounds like the disputed Fortnite lessons ($80.00), so I updated it instead of adding a new one.");
+      expect(r).toContain("Updated Fortnite lessons: $40.00");
+      expect(activeExpenses().map((e) => [e.description, e.totalCents])).toEqual([["Fortnite lessons", 4000]]);
+    });
+
+    it("still logs genuinely different expenses normally", async () => {
+      expect(await bot.say("priya", "Amit owed me $3 for nuts")).toContain("Nuts $3.00 · owed in full");
+      expect(activeExpenses()).toHaveLength(2);
+    });
+
+    it("doesn't treat a non-receipt photo as the fix", async () => {
+      bot.ctx.extractor = {
+        name: "test",
+        extractFromText: async () => ({ isExpense: false, hasReason: false, participants: "all" }),
+        extractFromImage: async () => ({ kind: "other", confidence: 0 }),
+      };
+      const r = await bot.say("priya", "fortnite lessons", [fakeReceipt({}, "selfie.jpg")]);
+      expect(r).toContain("doesn't look like a receipt");
+      expect(r).not.toContain("couldn't read a total");
+    });
+
+    it("shows open disputes in BALANCE for both people", async () => {
+      expect(await bot.say("amit", "balance")).toContain("⏸ You disputed Fortnite lessons $80.00 (waiting on Priya).");
+      expect(await bot.say("priya", "balance")).toContain("⏸ Your Fortnite lessons $80.00 is disputed.");
+    });
+  });
+
+  it("lets the disputer suggest an amount and the payer ACCEPT it", async () => {
+    await bot.say("priya", "Amit owes me $80 for fortnite lessons");
+    await bot.say("amit", "dispute should be $30, it was one lesson");
+    expect(bot.read("priya")).toContain("Amit suggests $30.00. Reply ACCEPT to change the total to $30.00");
+    expect(await bot.say("priya", "accept")).toContain("Updated Fortnite lessons: $30.00");
+    expect(bot.read("amit")).toContain("Your share: $30.00");
   });
 
   it("lets the payer withdraw a disputed expense", async () => {

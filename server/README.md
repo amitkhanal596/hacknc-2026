@@ -83,6 +83,6 @@ Changing the schema: edit `src/db/schema.ts`, then `npx drizzle-kit generate --n
 
 ## Bot commands (1:1 DMs)
 
-`NEW <name>` (replies with an invite link to `/j/<code>`) · `JOIN <code> [- I'm Name]` · `USE <group>` · `GROUPS` · `NAME <name>` · `BALANCE` · `SETTLE` · `PAY [name]` · `WHY [name]` · `YES` / `YES ALL` / `YES 1 3` · `DISPUTE [n] <reason>` · `FIX $amount` / `WITHDRAW` (payer, after a dispute) · `PAYOUTS` · `HELP`
+`NEW <name>` (replies with an invite link to `/j/<code>`) · `JOIN <code> [- I'm Name]` · `USE <group>` · `GROUPS` · `NAME <name>` · `BALANCE` · `SETTLE` · `PAY [name]` · `WHY [name]` · `YES` / `YES ALL` / `YES 1 3` · `DISPUTE [n] <reason>` · after a dispute the payer can reply with a new amount in plain words ("$30 is fine", "make it 40", `FIX 40`), `ACCEPT` the amount the disputer suggested ("DISPUTE should be $30"), or `WITHDRAW` · `PAYOUTS` · `HELP`
 
 Anything else is treated as a possible expense: text ("paid $80 for gas, split with jake and sam"), a receipt photo, or a screenshot of a chat message.

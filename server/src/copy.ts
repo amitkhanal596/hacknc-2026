@@ -32,6 +32,7 @@ export function flagBadges(flags: ExpenseFlag[], receiptTotalCents?: number | nu
 
 export function splitSummary(totalCents: number, shareCents: number[]): string {
   const n = shareCents.length;
+  if (n === 1) return "owed in full";
   // Even split if everyone pays the same, allowing the payer to absorb leftover cents.
   const base = Math.floor(totalCents / n);
   const even = shareCents.filter((c) => c !== base).length <= 1 && shareCents.every((c) => c >= base && c < base + n);

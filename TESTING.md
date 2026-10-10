@@ -27,7 +27,7 @@ Installed on your Mac: **Stripe CLI** 1.53.1, **cloudflared** (the HTTPS tunnel)
 
 | Test | Result |
 |---|---|
-| `npm test`: ledger math, the full Asheville scenario over DMs, extension API, jobs, Apple Pay flow (fake Stripe), join page, Photon registration, receipt-photo forwarding, image rejection, Gemini model fallback | ✅ **51 / 51** |
+| `npm test`: ledger math, the full Asheville scenario over DMs, extension API, jobs, Apple Pay flow (fake Stripe), join page, Photon registration, receipt-photo forwarding, image rejection, Gemini model fallback, home page, dispute fixes | ✅ **70 / 70** |
 | Simulator with **real Gemini**: receipt photo → expense, "dinner was 96, split with jake" → 2-way split, "pay me $20" → asks why, approvals, WHY, settle-up with Apple Pay links | ✅ |
 | `npm run check:stripe`: real PaymentIntent → test card → webhook → payment recorded | ✅ |
 | `npm run phone`: public HTTPS tunnel, Stripe registered the domain with **Apple Pay: active**, server reachable from the internet | ✅ |
@@ -211,7 +211,7 @@ Text messages fall back to the built-in parser if every model fails. Photos can'
 
 | Command | What it does |
 |---|---|
-| `npm test` | All 51 tests (no network) |
+| `npm test` | All 70 tests (no network) |
 | `npm run sim` | Text the bot from your terminal as different people |
 | `npm run phone` | Tunnel + Stripe domain + webhooks + server, for iPhone testing and demos. The public URL's home page is the signup site. |
 | `npm run preview:site` | Preview the home page design with fake data (http://localhost:3994, also `/started` and `/error`) |
