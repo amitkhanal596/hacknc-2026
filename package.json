@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit",
     "solana:setup": "tsx scripts/solana-setup.ts",
     "receipt:eval": "tsx scripts/receipt-eval.ts",
-    "register": "tsx scripts/register-users.ts"
+    "register": "tsx scripts/register-users.ts",
+    "solana:smoke": "tsx scripts/devnet-smoke.ts"
   },
   "keywords": [],
   "author": "",
